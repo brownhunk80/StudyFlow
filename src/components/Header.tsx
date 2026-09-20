@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { BookOpen, Flame, Moon, Sun, LogOut, ChevronDown, GraduationCap } from 'lucide-react';
+import { BookOpen, Flame, Moon, Sun, LogOut, ChevronDown, GraduationCap, Compass } from 'lucide-react';
 import { TabType } from '../types';
+import { useOnboarding } from '../context/OnboardingContext';
 
 interface HeaderProps {
   streakDays: number;
@@ -24,15 +25,18 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGuide,
 }) => {
   const [showScreenDropdown, setShowScreenDropdown] = useState(false);
+  const { replayGuide, resetAllGuides } = useOnboarding();
 
   const screenOptions = [
     { label: 'Home (Dashboard)', tab: 'home' as TabType },
     { label: 'Learn (Today\'s Plan & Choose Topic)', tab: 'focus' as TabType },
     { label: 'Recall (Active Recall & Spaced Repetition)', tab: 'recall' as TabType },
     { label: 'Plan (Schedule & Exams)', tab: 'plan' as TabType },
-    { label: '🎓 How It Works (Student Guide)', action: () => onOpenGuide && onOpenGuide() },
     { label: 'Progress & Stats', tab: 'progress' as TabType },
     { label: 'Student Profile', tab: 'profile' as TabType },
+    { label: '✨ Replay Welcome Tour', action: () => replayGuide('main') },
+    { label: '🔄 Reset All Tours & Guides', action: () => resetAllGuides() },
+    { label: '🎓 How It Works (Student Guide)', action: () => onOpenGuide && onOpenGuide() },
   ];
 
   return (

@@ -139,7 +139,7 @@ export const NotesSpacedReviewModal: React.FC<NotesSpacedReviewModalProps> = ({
                 className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm transition flex items-center gap-2 cursor-pointer self-start sm:self-auto shrink-0"
               >
                 <Mic className="w-3.5 h-3.5" />
-                <span>Record via Feynman AI</span>
+                <span>Voice Explanation</span>
               </button>
             )}
           </div>

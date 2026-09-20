@@ -195,6 +195,25 @@ export interface SpeechRecallGapAnalysis {
   }>;
 }
 
+export type TopicStatus = 'not_started' | 'learning' | 'studied' | 'revised' | 'recall_due';
+
+export interface ChapterTopicItem {
+  id: string;
+  title: string;
+  summary?: string;
+  sourceReference?: string; // e.g. "Section 10.1", "Pages 160-165", or "Whole Document"
+  sourceMaterialIds?: string[];
+  keyPoints?: string[];
+  keyFormula?: string;
+  status?: TopicStatus;
+  notes?: string;
+  aiNotes?: ChapterNote;
+  lastStudied?: string;
+  lastRevised?: string;
+  nextRecallDate?: string;
+  orderIndex?: number;
+}
+
 export interface Chapter {
   id: string;
   name: string;
@@ -223,6 +242,7 @@ export interface Chapter {
   lastVerifiedDate?: string;
   lastVerifiedScore?: number;
   handwrittenNotes?: HandwrittenNoteAttachment[];
+  topics?: ChapterTopicItem[]; // The granular topic level inside every chapter
 }
 
 export interface HandwrittenDiagramInfo {
@@ -429,4 +449,23 @@ export interface ELI5Response {
     correctIndex: number;
     cheer: string;
   };
+}
+
+export interface OnboardingState {
+  mainCompleted: boolean;
+  homeGuideCompleted: boolean;
+  learnGuideCompleted: boolean;
+  chapterGuideCompleted: boolean;
+  recallGuideCompleted: boolean;
+  planGuideCompleted: boolean;
+  progressGuideCompleted: boolean;
+}
+
+export type GuideKey = 'main' | 'home' | 'learn' | 'chapter' | 'recall' | 'plan' | 'progress';
+
+export interface TourStep {
+  targetSelector: string;
+  title: string;
+  description: string;
+  position?: 'top' | 'bottom' | 'left' | 'right' | 'auto';
 }

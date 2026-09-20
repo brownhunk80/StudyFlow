@@ -298,7 +298,7 @@ export const ChapterMaterialsManager: React.FC<ChapterMaterialsManagerProps> = (
                   className="px-3.5 py-2.5 rounded-xl bg-amber-500/30 hover:bg-amber-500/40 active:scale-95 text-amber-100 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer border border-amber-400/20"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Feynman AI Voice</span>
+                  <span>Voice Explanation</span>
                 </button>
               )}
 

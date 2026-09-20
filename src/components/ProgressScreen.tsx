@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Flame,
   Target,
@@ -16,6 +16,8 @@ import {
 import { Exam, Achievement, Flashcard, TaskItem } from '../types';
 import { calculateExamReadiness } from '../utils/examReadiness';
 import { getMemoryRetention } from '../utils/spacedRepetition';
+import { useOnboarding } from '../context/OnboardingContext';
+import { PageGuideButton } from './guide/PageGuideButton';
 
 interface ProgressScreenProps {
   exams: Exam[];
@@ -38,6 +40,12 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   onStartRecall,
   onStartFocusTask,
 }) => {
+  const { triggerPageTour } = useOnboarding();
+
+  useEffect(() => {
+    triggerPageTour('progress');
+  }, [triggerPageTour]);
+
   const [selectedExamId, setSelectedExamId] = useState<string>(
     exams.find((e) => e.name.toLowerCase() === 'science')?.id || exams[0]?.id || ''
   );
@@ -78,19 +86,24 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
   return (
     <div className="space-y-6 pb-12">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-          Your Progress
-        </h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Focusing on conceptual mastery, retention & real exam readiness
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              Your Progress
+            </h1>
+            <PageGuideButton guideKey="progress" label="How Progress works" />
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Focusing on conceptual mastery, retention & real exam readiness
+          </p>
+        </div>
       </div>
 
       {/* ========================================================================= */}
       {/* SECTION 1: EXAM READINESS COMPARISON                                      */}
       {/* ========================================================================= */}
-      <div className="space-y-3">
+      <div className="space-y-3" data-tour="progress-readiness">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
             <TrendingUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
@@ -270,7 +283,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       {/* ========================================================================= */}
       {/* SECTION 3: LEARNING METRICS GRID                                          */}
       {/* ========================================================================= */}
-      <div className="space-y-3">
+      <div className="space-y-3" data-tour="progress-metrics">
         <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
           Learning Metrics
         </h2>
@@ -355,7 +368,7 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       {/* ========================================================================= */}
       {/* SECTION 5: STUDY STREAK (Subtle & Non-Intrusive)                          */}
       {/* ========================================================================= */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+      <div data-tour="progress-streak" className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-amber-500">🔥</span>

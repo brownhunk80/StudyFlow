@@ -3,6 +3,7 @@ import {
   ChapterNote,
   ChapterTest,
   ChapterTestReview,
+  ChapterTopicItem,
   FeynmanRecordResult,
   HandwrittenConversionResult,
   RecallVerificationResult,
@@ -212,4 +213,23 @@ export async function fetchConvertHandwrittenNotes(params: {
   }
   return res.json();
 }
+
+export async function fetchExtractChapterTopics(
+  chapterName: string,
+  subject: string,
+  materials?: ChapterMaterial[],
+  examName?: string
+): Promise<{ topics: ChapterTopicItem[]; sourceSummary?: string }> {
+  const res = await fetch('/api/ai/extract-chapter-topics', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chapterName, subject, materials, examName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to extract topics' }));
+    throw new Error(err.error || 'Failed to extract chapter topics');
+  }
+  return res.json();
+}
+
 

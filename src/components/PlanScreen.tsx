@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus,
   Calendar,
@@ -14,6 +14,8 @@ import { AddExamModal } from './AddExamModal';
 import { TaskModal } from './TaskModal';
 import { ExamDetailsView } from './ExamDetailsView';
 import { DetailedStudyPlanView } from './DetailedStudyPlanView';
+import { useOnboarding } from '../context/OnboardingContext';
+import { PageGuideButton } from './guide/PageGuideButton';
 
 export interface PlanScreenProps {
   tasks: TaskItem[];
@@ -102,6 +104,14 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
     ? exams.find((e) => e.id === selectedExamForDetails.id) || selectedExamForDetails
     : null;
 
+  const { triggerPageTour } = useOnboarding();
+
+  useEffect(() => {
+    if (currentView === 'landing') {
+      triggerPageTour('plan');
+    }
+  }, [currentView, triggerPageTour]);
+
   // =========================================================================
   // VIEW: EXAM DETAILS SCREEN
   // =========================================================================
@@ -179,7 +189,10 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Main Title */}
         <div>
-          <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Plan</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Plan</h1>
+            <PageGuideButton guideKey="plan" label="How Plan works" />
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Manage your upcoming exams and active study plan.
           </p>
@@ -194,6 +207,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
               My Exams
             </h2>
             <button
+              data-tour="plan-add-exam-btn"
               onClick={() => setIsAddExamModalOpen(true)}
               className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
             >
@@ -203,7 +217,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
           </div>
 
           {exams.length === 0 ? (
-            <div className="p-6 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+            <div data-tour="plan-exam-list" className="p-6 text-center rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
               <Calendar className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-xs text-slate-600 dark:text-slate-400">
                 No exams added yet. Add an exam to automatically schedule your study plan.
@@ -217,7 +231,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
               </button>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div data-tour="plan-exam-list" className="space-y-2">
               {exams.map((exam) => (
                 <div
                   key={exam.id}
@@ -280,7 +294,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
 
           {hasStudyPlan ? (
             /* If a plan exists */
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-950/60 shadow-2xs space-y-3">
+            <div data-tour="plan-create-btn" className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-950/60 shadow-2xs space-y-3">
               <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-black text-sm">
                 <CheckCircle2 className="w-5 h-5 shrink-0" />
                 <span>Your study plan is ready</span>
@@ -305,7 +319,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
             </div>
           ) : (
             /* If no plan exists */
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-3">
+            <div data-tour="plan-create-btn" className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-3">
               <p className="text-xs text-slate-600 dark:text-slate-400">
                 Your study plan hasn't been created yet.
               </p>

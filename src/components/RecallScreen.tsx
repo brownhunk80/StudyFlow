@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   CheckCircle2,
@@ -13,6 +13,8 @@ import {
 import { Flashcard, FlashcardDeck, SubjectItem } from '../types';
 import { isCardDue } from '../utils/spacedRepetition';
 import confetti from 'canvas-confetti';
+import { useOnboarding } from '../context/OnboardingContext';
+import { PageGuideButton } from './guide/PageGuideButton';
 
 interface RecallScreenProps {
   decks?: FlashcardDeck[];
@@ -90,6 +92,12 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
 
   const subjectEntries = Object.entries(subjectBreakdown).sort((a, b) => b[1].count - a[1].count);
 
+  const { triggerPageTour } = useOnboarding();
+
+  useEffect(() => {
+    triggerPageTour('recall');
+  }, [triggerPageTour]);
+
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-20 pt-2">
       {/* ======================================================================= */}
@@ -97,9 +105,12 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
       {/* ======================================================================= */}
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-            Recall
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+              Recall
+            </h1>
+            <PageGuideButton guideKey="recall" label="How Recall works" />
+          </div>
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
             Review items scheduled for today to lock them into memory.
           </p>
@@ -118,7 +129,7 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
       {/* 2. TODAY'S RECALL (PRIMARY FOCUS)                                       */}
       {/* ======================================================================= */}
       {dueCards.length > 0 ? (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-6">
+        <div data-tour="recall-due-cards" className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-7 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-6">
           {/* Due Count & Time */}
           <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-5">
             <div>
@@ -172,6 +183,7 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
           {/* Large, Obvious Primary Action */}
           <div className="pt-2">
             <button
+              data-tour="recall-start-btn"
               onClick={() => handleStart()}
               className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-black text-base flex items-center justify-center gap-2.5 shadow-sm shadow-indigo-200 dark:shadow-none transition cursor-pointer group"
             >

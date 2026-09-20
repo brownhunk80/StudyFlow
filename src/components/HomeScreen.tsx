@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Play,
   Brain,
@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { TaskItem, Exam, UserProfile, Flashcard, SubjectItem, Chapter } from '../types';
 import { isCardDue } from '../utils/spacedRepetition';
+import { useOnboarding } from '../context/OnboardingContext';
+import { PageGuideButton } from './guide/PageGuideButton';
 
 interface HomeScreenProps {
   user: UserProfile;
@@ -79,6 +81,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   // Next upcoming exam (earliest upcoming exam, strictly respecting multi-exam scheduling)
   const upcomingExam = nextExam || exams[0] || null;
 
+  const { triggerPageTour } = useOnboarding();
+
+  useEffect(() => {
+    triggerPageTour('home');
+  }, [triggerPageTour]);
+
   return (
     <div className="max-w-2xl mx-auto space-y-7 pb-16 pt-2">
       {/* ======================================================================= */}
@@ -86,9 +94,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ======================================================================= */}
       <div className="flex items-center justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-            {getGreeting()}, {firstName}
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+              {getGreeting()}, {firstName}
+            </h1>
+            <PageGuideButton guideKey="home" label="How Home works" />
+          </div>
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
             Here is what you should do today.
           </p>
@@ -104,7 +115,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ======================================================================= */}
       {/* 2. TODAY'S STUDY SECTION                                                */}
       {/* ======================================================================= */}
-      <div className="space-y-4">
+      <div data-tour="today-study" className="space-y-4">
         <div className="flex items-center justify-between px-1">
           <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
             Today&apos;s Study
@@ -117,7 +128,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* --------------------------------------------------------------------- */}
         {/* PRIORITY 1: RECALL                                                    */}
         {/* --------------------------------------------------------------------- */}
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
+        <div data-tour="home-recall" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
@@ -196,7 +207,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         {/* --------------------------------------------------------------------- */}
         {/* PRIORITY 2: LEARN                                                     */}
         {/* --------------------------------------------------------------------- */}
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
+        <div data-tour="home-learn" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-100 dark:border-emerald-900/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
@@ -278,17 +289,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* ======================================================================= */}
       {/* 3. UP NEXT (Small, Calm, Max 2 Items)                                    */}
       {/* ======================================================================= */}
-      {upNextTasks.length > 0 && (
-        <div className="space-y-2.5 pt-1">
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-              Up Next
-            </h2>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              Later in your plan
-            </span>
-          </div>
+      <div data-tour="home-up-next" className="space-y-2.5 pt-1">
+        <div className="flex items-center justify-between px-1">
+          <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+            Up Next
+          </h2>
+          <span className="text-xs text-slate-400 dark:text-slate-500">
+            Later in your plan
+          </span>
+        </div>
 
+        {upNextTasks.length > 0 ? (
           <div className="space-y-2">
             {upNextTasks.map((task) => (
               <div
@@ -323,8 +334,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400">
+            Upcoming sessions in your plan will appear here.
+          </div>
+        )}
+      </div>
 
       {/* ======================================================================= */}
       {/* 4. CALM UPCOMING EXAM REMINDER (Quiet 1-line note at bottom)             */}

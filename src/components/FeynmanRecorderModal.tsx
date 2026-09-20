@@ -178,10 +178,10 @@ export const FeynmanRecorderModal: React.FC<FeynmanRecorderModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                Feynman AI Voice Recorder
+                Voice Explanation Recorder
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Teach it simply like Richard Feynman • Auto-simplifies & records
+                Explain concepts simply in your own words • Auto-simplifies & records
               </p>
             </div>
           </div>
@@ -304,12 +304,12 @@ export const FeynmanRecorderModal: React.FC<FeynmanRecorderModalProps> = ({
                 {isProcessing ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Feynman AI is Synthesizing...</span>
+                    <span>Simplifying & Synthesizing...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Process With Feynman AI ({mode === 'notes' ? 'Notes' : 'Flashcards'})</span>
+                    <span>Simplify Concept ({mode === 'notes' ? 'Notes' : 'Flashcards'})</span>
                   </>
                 )}
               </button>
@@ -325,7 +325,7 @@ export const FeynmanRecorderModal: React.FC<FeynmanRecorderModalProps> = ({
                     <Check className="w-4 h-4" />
                   </div>
                   <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-300">
-                    Feynman AI Simplification Ready!
+                    Concept Simplification Ready!
                   </h4>
                 </div>
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400">

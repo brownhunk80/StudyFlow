@@ -1046,6 +1046,20 @@ export default function App() {
                 )
               );
             }}
+            onUpdateChapterTopics={(chapterId, topics, examId) => {
+              setExams((prev) =>
+                prev.map((e) =>
+                  (!examId || e.id === examId || e.chapters.some((c) => c.id === chapterId))
+                    ? {
+                        ...e,
+                        chapters: e.chapters.map((c) =>
+                          c.id === chapterId ? { ...c, topics } : c
+                        ),
+                      }
+                    : e
+                )
+              );
+            }}
             onAddFlashcards={(newCards) => {
               const formatted: Flashcard[] = newCards.map((c, idx) => ({
                 ...c,

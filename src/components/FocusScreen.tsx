@@ -43,6 +43,7 @@ import {
   Chapter,
   ChapterMaterial,
   ChapterNote,
+  ChapterTopicItem,
   HandwrittenNoteAttachment,
   Flashcard,
   FlashcardDeck,
@@ -56,8 +57,11 @@ import {
   ChapterTopic,
 } from '../data/chapterTopicsData';
 import { ChapterMaterialsManager } from './ChapterMaterialsManager';
+import { ChapterTopicExtractor } from './ChapterTopicExtractor';
 import { ELI5Explainer } from './ELI5Explainer';
 import { SAMPLE_HANDWRITTEN_NOTE_SVG } from '../data/sampleHandwrittenNote';
+import { useOnboarding } from '../context/OnboardingContext';
+import { PageGuideButton } from './guide/PageGuideButton';
 import {
   fetchRecallVerification,
   fetchConvertHandwrittenNotes,
@@ -101,6 +105,11 @@ export interface FocusScreenProps {
     materials: ChapterMaterial[],
     examId?: string
   ) => void;
+  onUpdateChapterTopics?: (
+    chapterId: string,
+    topics: ChapterTopicItem[],
+    examId?: string
+  ) => void;
   onAddFlashcards?: (
     cards: Array<Omit<Flashcard, 'id' | 'interval' | 'repetitions' | 'easeFactor' | 'status' | 'box'>>
   ) => void;
@@ -125,6 +134,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   onUpdateChapterNotes,
   onUpdateChapterStatus,
   onUpdateChapterMaterials,
+  onUpdateChapterTopics,
   onAddFlashcards,
   onAddChapter,
   onScheduleRevisionTasks,
@@ -276,6 +286,22 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   }, [activeChapter?.id]);
 
   // Timer interval
+  const { triggerPageTour } = useOnboarding();
+
+  // Trigger Learn landing guide when on Level 0
+  useEffect(() => {
+    if (!selectedSubjectId && !selectedChapterId) {
+      triggerPageTour('learn');
+    }
+  }, [selectedSubjectId, selectedChapterId, triggerPageTour]);
+
+  // Trigger Chapter guide when viewing Chapter Workspace
+  useEffect(() => {
+    if (selectedChapterId) {
+      triggerPageTour('chapter');
+    }
+  }, [selectedChapterId, triggerPageTour]);
+
   useEffect(() => {
     let interval: any = null;
     if (isTimerRunning && timerSecondsLeft > 0) {
@@ -586,18 +612,23 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-28 pt-4 px-4 transition-colors">
         <div className="max-w-3xl mx-auto space-y-6">
           {/* Header */}
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              Learn
-            </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-              Start today's scheduled lesson or choose any subject folder below.
-            </p>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                  Learn
+                </h1>
+                <PageGuideButton guideKey="learn" label="How Learn works" />
+              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                Start today's scheduled lesson or choose any subject folder below.
+              </p>
+            </div>
           </div>
 
           {/* SECTION A: TODAY'S RECOMMENDED LEARNING */}
           {recommendedLearnTask ? (
-            <section className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-indigo-100 dark:border-indigo-900/60 shadow-xs relative overflow-hidden">
+            <section data-tour="learn-today" className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-indigo-100 dark:border-indigo-900/60 shadow-xs relative overflow-hidden">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
@@ -645,7 +676,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
               </div>
             </section>
           ) : (
-            <section className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <section data-tour="learn-today" className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                   Today's Study Plan
@@ -668,7 +699,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
           )}
 
           {/* SECTION B: ALL SUBJECTS */}
-          <section className="space-y-3">
+          <section data-tour="learn-subjects" className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-base font-black text-slate-900 dark:text-white">
@@ -982,6 +1013,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
           </button>
 
           <div className="flex items-center gap-2">
+            <PageGuideButton guideKey="chapter" label="How Chapters work" />
             <span
               className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-md ${getChapterStatusColor(
                 activeChapter?.status || 'learning'
@@ -1005,9 +1037,9 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
         {/* 3-STAGE CONNECTED STEPPER: STUDY → REVISION → UPDATE NOTES */}
         <div className="bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs flex items-center justify-between gap-1">
           {[
-            { id: 'study' as const, num: 1, label: 'STUDY', desc: 'Understand' },
-            { id: 'revision' as const, num: 2, label: 'REVISION', desc: 'Recall' },
-            { id: 'update_notes' as const, num: 3, label: 'UPDATE NOTES', desc: 'Finalize' },
+            { id: 'study' as const, num: 1, label: 'STUDY', desc: 'Understand', tourId: 'chapter-study-tab' },
+            { id: 'revision' as const, num: 2, label: 'REVISION', desc: 'Recall', tourId: 'chapter-revision-tab' },
+            { id: 'update_notes' as const, num: 3, label: 'UPDATE NOTES', desc: 'Finalize', tourId: 'chapter-notes-tab' },
           ].map((stage, idx) => {
             const isActive = activeStage === stage.id;
             const isPassed =
@@ -1017,6 +1049,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
             return (
               <button
                 key={stage.id}
+                data-tour={stage.tourId}
                 onClick={() => setActiveStage(stage.id)}
                 className={`flex-1 py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center sm:flex-row sm:items-center sm:justify-center gap-1 sm:gap-2 ${
                   isActive
@@ -1178,16 +1211,30 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
 
             {/* Sub-view: Book Pages & Materials */}
             {studySubTab === 'materials' && (
-              <ChapterMaterialsManager
-                chapterName={activeChapter?.name || 'Chapter'}
-                subject={currentSubject?.name || 'Subject'}
-                materials={activeChapter?.materials || []}
-                onUpdateMaterials={(m) => {
-                  if (onUpdateChapterMaterials && activeChapter) {
-                    onUpdateChapterMaterials(activeChapter.id, m, currentExam?.id);
-                  }
-                }}
-              />
+              <div className="space-y-4">
+                <ChapterTopicExtractor
+                  chapterName={activeChapter?.name || 'Chapter'}
+                  subject={currentSubject?.name || 'Subject'}
+                  examName={currentExam?.name}
+                  materials={activeChapter?.materials || []}
+                  existingTopics={activeChapter?.topics || []}
+                  onTopicsExtracted={(topics) => {
+                    if (onUpdateChapterTopics && activeChapter) {
+                      onUpdateChapterTopics(activeChapter.id, topics, currentExam?.id);
+                    }
+                  }}
+                />
+                <ChapterMaterialsManager
+                  chapterName={activeChapter?.name || 'Chapter'}
+                  subject={currentSubject?.name || 'Subject'}
+                  materials={activeChapter?.materials || []}
+                  onUpdateMaterials={(m) => {
+                    if (onUpdateChapterMaterials && activeChapter) {
+                      onUpdateChapterMaterials(activeChapter.id, m, currentExam?.id);
+                    }
+                  }}
+                />
+              </div>
             )}
 
             {/* Sub-view: Ask AI to Explain Simply */}
