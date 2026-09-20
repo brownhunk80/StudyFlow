@@ -1,0 +1,6 @@
+{
+  "name": "StudyFlow",
+  "description": "Simplified student study system organized by subject folders with a focused flow: Simple Learn (Pomodoro + notes & video lessons), Recall (voice notes & picture uploads), Prepare Notes (with handwritten note OCR & preserved diagram pictures), Check Gaps, 1-Click Update Notes, and RemNote-style automated flashcard recall.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
