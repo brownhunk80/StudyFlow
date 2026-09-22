@@ -1,0 +1,232 @@
+// Prisma Schema for Modular "Learn Document" Architecture (StudyFlow)
+// Supporting Document & Section hierarchy, Dual-Tier Summaries, Active Recall,
+// Spaced-Repetition Flashcards (SM-2), and Comprehensive Quiz Engine.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum DocumentStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  REVISING
+  MASTERED
+}
+
+enum SummaryMode {
+  compact
+  detailed
+}
+
+enum FlashcardStatus {
+  active
+  disabled
+}
+
+enum QuizMode {
+  study
+  test
+}
+
+enum QuestionDifficulty {
+  Recall
+  Application
+}
+
+// ---------------------------------------------------------------------------
+// 1. Document & Section Hierarchy
+// ---------------------------------------------------------------------------
+
+model LearnDocument {
+  id               String          @id @default(cuid())
+  title            String
+  subjectId        String?
+  subjectName      String?
+  examId           String?
+  sourceMaterial   String?         @db.Text
+  status           DocumentStatus  @default(NOT_STARTED)
+  overallProgress  Float           @default(0.0) // 0 - 100%
+  
+  // Backward compatibility anchor to existing Chapter entity
+  legacyChapterId  String?         @unique
+  
+  sections         Section[]
+  
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([subjectId])
+  @@index([examId])
+}
+
+model Section {
+  id                 String              @id @default(cuid())
+  documentId         String
+  document           LearnDocument       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  title              String
+  sectionNumber      Int                 // e.g. 1, 2, 3...
+  completionRate     Float               @default(0.0) // 0 - 100
+  keyTopics          String[]            // Array of strings representing sub-topics/tags
+  isSkipped          Boolean             @default(false)
+  
+  // Additional modular attributes
+  orderIndex         Int                 @default(0)
+  estimatedMinutes   Int                 @default(15)
+  sourceReference    String?             // e.g., "Pages 42-48", "Section 3.2"
+  legacyTopicId      String?             // Preserves source Topic/ChapterTopicItem ID
+  
+  // Relational Modules
+  summaries          Summary[]
+  knowledgeQuestions KnowledgeQuestion[]
+  flashcards         Flashcard[]
+  quizzes            Quiz[]
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([documentId, sectionNumber])
+  @@index([documentId])
+  @@index([legacyTopicId])
+}
+
+// ---------------------------------------------------------------------------
+// 2. Dual-Tier Summaries & Recall
+// ---------------------------------------------------------------------------
+
+model Summary {
+  id              String      @id @default(cuid())
+  sectionId       String
+  section         Section     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  mode            SummaryMode // 'compact' | 'detailed'
+  contentMarkdown String      @db.Text
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([sectionId, mode])
+  @@index([sectionId])
+}
+
+model KnowledgeQuestion {
+  id           String    @id @default(cuid())
+  sectionId    String
+  section      Section   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  question     String    @db.Text
+  sampleAnswer String    @db.Text
+  userResponse String?   @db.Text
+  isCorrect    Boolean?  // null if unattempted, true/false upon self/AI evaluation
+  
+  feedback     String?   @db.Text
+  evaluatedAt  DateTime?
+  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([sectionId])
+}
+
+// ---------------------------------------------------------------------------
+// 3. Spaced-Repetition Flashcards (SuperMemo SM-2 Parameters)
+// ---------------------------------------------------------------------------
+
+model Flashcard {
+  id             String          @id @default(cuid())
+  sectionId      String
+  section        Section         @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  frontPrompt    String          @db.Text
+  backAnswer     String          @db.Text
+  sourceContext  String?         @db.Text
+  
+  // SM-2 Spaced Repetition Parameters
+  interval       Int             @default(1)    // Days until next review
+  repetition     Int             @default(0)    // Number of consecutive successful recalls
+  easinessFactor Float           @default(2.5)  // SM-2 Easiness Factor (EF >= 1.3)
+  
+  status         FlashcardStatus @default(active) // 'active' | 'disabled'
+  
+  dueDate        DateTime        @default(now())
+  lastReviewed   DateTime?
+  legacyCardId   String?         // Reference to pre-migration card ID
+  
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([sectionId])
+  @@index([status, dueDate])
+}
+
+// ---------------------------------------------------------------------------
+// 4. Comprehensive Quiz Engine
+// ---------------------------------------------------------------------------
+
+model Quiz {
+  id               String         @id @default(cuid())
+  sectionId        String
+  section          Section        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  mode             QuizMode       // 'study' (instant explanations) | 'test' (timed assessment)
+  score            Float?         // 0 - 100 percentage or scaled score
+  timeTakenSeconds Int?           // Duration of attempt in seconds
+  
+  questions        QuizQuestion[]
+  completedAt      DateTime?
+  
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([sectionId])
+  @@index([mode])
+}
+
+model QuizQuestion {
+  id           String             @id @default(cuid())
+  quizId       String
+  quiz         Quiz               @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  
+  questionText String             @db.Text
+  choices      Json               // JSON array of strings e.g. ["Option A", "Option B", "Option C", "Option D"]
+  correctIndex Int                // 0-based index of correct option
+  
+  // Comprehensive explanation: why the right answer is correct & why wrong choices are incorrect
+  explanation  String             @db.Text
+  topicTag     String
+  difficulty   QuestionDifficulty // 'Recall' | 'Application'
+  
+  orderIndex   Int                @default(0)
+  
+  userResponses UserResponse[]
+
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([quizId])
+  @@index([topicTag])
+  @@index([difficulty])
+}
+
+model UserResponse {
+  id             String       @id @default(cuid())
+  quizQuestionId String
+  quizQuestion   QuizQuestion @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade)
+  
+  selectedIndex  Int          // Index chosen by user (-1 if skipped)
+  isCorrect      Boolean      // Evaluated against quizQuestion.correctIndex
+  timeSpentSec   Int?
+  
+  createdAt      DateTime     @default(now())
+
+  @@index([quizQuestionId])
+}

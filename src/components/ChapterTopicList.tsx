@@ -17,6 +17,7 @@ import {
   ListTodo,
 } from 'lucide-react';
 import { ChapterTopicItem, TopicStatus } from '../types';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface ChapterTopicListProps {
   topics: ChapterTopicItem[];
@@ -60,6 +61,7 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
   const [editEstimatedMinutes, setEditEstimatedMinutes] = useState<number>(15);
 
   const [expandedTopicId, setExpandedTopicId] = useState<string | null>(null);
+  const [topicToDelete, setTopicToDelete] = useState<ChapterTopicItem | null>(null);
 
   const handleStartEdit = (topic: ChapterTopicItem) => {
     setEditingTopicId(topic.id);
@@ -101,7 +103,8 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
       onUpdateTopic({
         ...topic,
         status: newStatus,
-        lastRevised: newStatus === 'completed' ? new Date().toISOString() : topic.lastRevised,
+        lastStudied: newStatus === 'studied' || newStatus === 'revised' ? new Date().toISOString() : topic.lastStudied,
+        lastRevised: newStatus === 'revised' ? new Date().toISOString() : topic.lastRevised,
       });
     }
   };
@@ -120,30 +123,36 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
   };
 
   // Status badge styling
-  const getStatusBadge = (status: TopicStatus) => {
+  const getStatusBadge = (status: TopicStatus = 'not_started') => {
     switch (status) {
-      case 'completed':
+      case 'studied':
         return {
-          label: 'Mastered',
+          label: '✓ Studied',
           badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300/40',
           dotClass: 'bg-emerald-500',
         };
-      case 'revision_needed':
+      case 'revised':
         return {
-          label: 'Revision Due',
+          label: '✓ Revised',
+          badgeClass: 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 border-teal-300/40',
+          dotClass: 'bg-teal-500',
+        };
+      case 'recall_due':
+        return {
+          label: '🔄 Recall Due',
           badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300/40',
           dotClass: 'bg-amber-500 animate-pulse',
         };
-      case 'in_progress':
+      case 'learning':
         return {
-          label: 'In Progress',
+          label: '◐ Learning',
           badgeClass: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-300/40',
           dotClass: 'bg-indigo-500',
         };
       case 'not_started':
       default:
         return {
-          label: 'Not Started',
+          label: '○ Not Started',
           badgeClass: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300/40',
           dotClass: 'bg-slate-400',
         };
@@ -151,10 +160,10 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
   };
 
   // Calculate progress stats
-  const completedCount = topics.filter((t) => t.status === 'completed').length;
-  const inProgressCount = topics.filter((t) => t.status === 'in_progress').length;
-  const revisionCount = topics.filter((t) => t.status === 'revision_needed').length;
-  const percentComplete = topics.length > 0 ? Math.round((completedCount / topics.length) * 100) : 0;
+  const studiedCount = topics.filter((t) => t.status === 'studied' || t.status === 'revised').length;
+  const learningCount = topics.filter((t) => t.status === 'learning').length;
+  const recallDueCount = topics.filter((t) => t.status === 'recall_due').length;
+  const percentComplete = topics.length > 0 ? Math.round((studiedCount / topics.length) * 100) : 0;
 
   return (
     <div
@@ -169,7 +178,7 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
           </div>
           <div>
             <div className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-              LEARNING BREAKDOWN
+              SUBJECT → CHAPTER → TOPICS
             </div>
             <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
               <span>Chapter Topics</span>
@@ -191,7 +200,7 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
               className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>{isExtracting ? 'Extracting...' : 'AI Topic Extraction'}</span>
+              <span>{isExtracting ? 'Extracting Topics...' : 'AI Topic Extraction'}</span>
             </button>
           )}
 
@@ -212,22 +221,16 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
         <div className="space-y-1.5 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-slate-700 dark:text-slate-300">
-              Topic Mastery Progress: {percentComplete}%
+              Topic Coverage ({topics.length} Meaningful Concepts)
             </span>
             <div className="flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                {completedCount} Mastered
+                {studiedCount} Completed
               </span>
-              {revisionCount > 0 && (
-                <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
-                  {revisionCount} Recall Due
-                </span>
-              )}
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 inline-block" />
-                {topics.length - completedCount - revisionCount} Remaining
+                {topics.length - studiedCount} To Learn
               </span>
             </div>
           </div>
@@ -445,13 +448,15 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        const currentStatus = topic.status || 'not_started';
                         const nextStatus: Record<TopicStatus, TopicStatus> = {
-                          not_started: 'in_progress',
-                          in_progress: 'completed',
-                          completed: 'revision_needed',
-                          revision_needed: 'completed',
+                          not_started: 'learning',
+                          learning: 'studied',
+                          studied: 'revised',
+                          revised: 'recall_due',
+                          recall_due: 'learning',
                         };
-                        handleStatusChange(topic, nextStatus[topic.status]);
+                        handleStatusChange(topic, nextStatus[currentStatus]);
                       }}
                       className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 dark:hover:bg-slate-700 transition cursor-pointer"
                       title="Cycle Topic Status"
@@ -473,10 +478,9 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
                     {onDeleteTopic && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirm(`Remove topic "${topic.title}"?`)) {
-                            onDeleteTopic(topic.id);
-                          }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTopicToDelete(topic);
                         }}
                         className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
                         title="Delete Topic"
@@ -578,6 +582,20 @@ export const ChapterTopicList: React.FC<ChapterTopicListProps> = ({
           })}
         </div>
       )}
+
+      {/* Confirmation modal for topic deletion */}
+      <DeleteConfirmModal
+        isOpen={Boolean(topicToDelete)}
+        type="topic"
+        itemName={topicToDelete?.title || ''}
+        onCancel={() => setTopicToDelete(null)}
+        onConfirm={() => {
+          if (topicToDelete && onDeleteTopic) {
+            onDeleteTopic(topicToDelete.id);
+            setTopicToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };

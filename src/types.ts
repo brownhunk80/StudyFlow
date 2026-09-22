@@ -1,4 +1,4 @@
-export type TabType = 'home' | 'focus' | 'recall' | 'plan' | 'progress' | 'profile';
+export type TabType = 'home' | 'focus' | 'recall' | 'plan' | 'progress' | 'profile' | 'debug_test_suite';
 
 export type PlanSubTab = 'today' | 'upcoming' | 'exams';
 
@@ -25,6 +25,7 @@ export interface KnowledgeGapItem {
   whyItNeedsWork?: string;
   importance?: 'critical' | 'high' | 'medium';
   lastTested?: string;
+  topicId?: string;
 }
 
 export type RecallRating = 'again' | 'hard' | 'good' | 'easy';
@@ -118,6 +119,68 @@ export interface TestQuestion {
   correctAnswer: string;
   explanation: string;
   conceptTested: string;
+  topicId: string;
+  topicTitle?: string;
+  skill?: string;
+  questionType: 'recall' | 'numerical' | 'application' | 'reasoning' | 'diagram';
+  sourcePattern?: string;
+}
+
+export type PracticeMode = 'quick_recall' | 'practice' | 'challenge' | 'exam_practice';
+
+export type PracticeQuestionType =
+  | 'problem_solving'
+  | 'direct_practice'
+  | 'worked_example_variation'
+  | 'word_problem'
+  | 'application'
+  | 'error_analysis'
+  | 'diagram_based'
+  | 'experiment_activity'
+  | 'data_graph'
+  | 'concept_recall';
+
+export interface PracticeQuestion {
+  id: string;
+  type: PracticeQuestionType;
+  question: string;
+  context?: string;
+  diagramSvg?: string;
+  tableData?: Array<Record<string, string | number>>;
+  options?: string[];
+  correctAnswer: string;
+  stepByStepSolution: string[];
+  conceptTested: string;
+  learningObjective?: string;
+  commonMistake: string;
+  difficulty: 'textbook_fundamentals' | 'standard_practice' | 'exam_level' | 'challenge';
+  sourceLabel: string;
+  subject: string;
+  practiceMode: PracticeMode;
+  hint?: string;
+}
+
+export interface PracticeAnswerEvaluation {
+  isCorrect: boolean;
+  score: number; // 0 - 100
+  feedback: string;
+  stepByStepSolution: string[];
+  identifiedMistake?: string | null;
+  conceptTested: string;
+  recommendation: string;
+  canTrySimilar: boolean;
+}
+
+export interface QuestionPatternMap {
+  chapterName: string;
+  subject: string;
+  corePatterns: Array<{
+    id: string;
+    name: string;
+    description: string;
+    expectedAction: 'solve' | 'calculate' | 'derive' | 'explain' | 'diagram' | 'experiment' | 'interpret';
+  }>;
+  textbookActivityTypes: string[];
 }
 
 export interface ChapterTest {
@@ -206,12 +269,14 @@ export interface ChapterTopicItem {
   keyPoints?: string[];
   keyFormula?: string;
   status?: TopicStatus;
+  confidence?: number;
   notes?: string;
   aiNotes?: ChapterNote;
   lastStudied?: string;
   lastRevised?: string;
   nextRecallDate?: string;
   orderIndex?: number;
+  estimatedMinutes?: number;
 }
 
 export interface Chapter {
@@ -243,6 +308,7 @@ export interface Chapter {
   lastVerifiedScore?: number;
   handwrittenNotes?: HandwrittenNoteAttachment[];
   topics?: ChapterTopicItem[]; // The granular topic level inside every chapter
+  sections?: Section[];
 }
 
 export interface HandwrittenDiagramInfo {
@@ -274,6 +340,7 @@ export interface HandwrittenNoteAttachment {
 export type VerificationInputMode = 'speaking' | 'written_paper' | 'typing';
 
 export interface RecallVerificationResult {
+  topicId?: string;
   inputMode: VerificationInputMode;
   extractedOrTranscribedText?: string;
   coverageScore: number; // 0 - 100
@@ -328,7 +395,10 @@ export interface SubjectItem {
   name: string;
   color: string;
   type: 'study' | 'project';
+  chapters?: Chapter[];
 }
+
+export type Subject = SubjectItem;
 
 export interface TaskItem {
   id: string;
@@ -468,4 +538,157 @@ export interface TourStep {
   title: string;
   description: string;
   position?: 'top' | 'bottom' | 'left' | 'right' | 'auto';
+}
+
+// ============================================================================
+// MODULAR "LEARN DOCUMENT" ARCHITECTURE (StudyFlow)
+// ============================================================================
+
+export type SummaryMode = 'compact' | 'detailed';
+
+export type FlashcardStatus = 'active' | 'disabled';
+
+export type QuizMode = 'study' | 'test';
+
+export type QuestionDifficulty = 'Recall' | 'Application';
+
+/**
+ * Section within a Learn Document.
+ * Supports granular progress tracking, topic mapping, and skip states.
+ */
+export interface Section {
+  id: string;
+  documentId: string;
+  title: string;
+  sectionNumber: number;
+  completionRate: number; // 0 - 100
+  keyTopics: string[]; // array of strings
+  isSkipped: boolean;
+  orderIndex?: number;
+  estimatedMinutes?: number;
+  sourceReference?: string;
+  legacyTopicId?: string; // Tracks migration from ChapterTopicItem.id
+  summary?: string;
+  summaries?: Summary[];
+  knowledgeQuestions?: KnowledgeQuestion[];
+  flashcards?: DocumentFlashcard[];
+  quizzes?: Quiz[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Top-level Learn Document (previously Chapter).
+ */
+export interface LearnDocument {
+  id: string;
+  title: string;
+  subjectId?: string;
+  subjectName?: string;
+  examId?: string;
+  sourceMaterial?: string;
+  status?: 'NOT_STARTED' | 'IN_PROGRESS' | 'REVISING' | 'MASTERED';
+  overallProgress: number; // 0 - 100
+  legacyChapterId?: string; // Tracks migration from Chapter.id
+  sections: Section[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Dual-Tier Summaries:
+ * - 'compact': bulleted, high-yield takeaways & formulas
+ * - 'detailed': deep dive explanations, conceptual nuance, and worked examples
+ */
+export interface Summary {
+  id: string;
+  sectionId: string;
+  mode: SummaryMode; // 'compact' | 'detailed'
+  contentMarkdown: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Active Recall / Knowledge Check Questions per Section.
+ */
+export interface KnowledgeQuestion {
+  id: string;
+  sectionId: string;
+  question: string;
+  sampleAnswer: string;
+  userResponse?: string;
+  isCorrect?: boolean | null;
+  feedback?: string;
+  evaluatedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Section-level Spaced-Repetition Flashcard using SuperMemo SM-2 parameters.
+ */
+export interface DocumentFlashcard {
+  id: string;
+  sectionId: string;
+  frontPrompt: string;
+  backAnswer: string;
+  sourceContext?: string;
+  // SM-2 parameters
+  interval: number; // in days
+  repetition: number; // successful repetitions counter
+  easinessFactor: number; // default 2.5, minimum 1.3
+  status: FlashcardStatus; // 'active' | 'disabled'
+  dueDate?: string; // ISO string
+  lastReviewed?: string; // ISO string
+  legacyCardId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Comprehensive Quiz session per Section.
+ * - 'study': instant feedback, remediation, no strict timer
+ * - 'test': exam simulation conditions, timed, cumulative scoring
+ */
+export interface Quiz {
+  id: string;
+  sectionId: string;
+  mode: QuizMode; // 'study' | 'test'
+  score?: number | null; // 0 - 100
+  timeTakenSeconds?: number | null;
+  completedAt?: string;
+  questions: QuizQuestion[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Individual Quiz Question with multi-part rationale and difficulty tiering.
+ */
+export interface QuizQuestion {
+  id: string;
+  quizId: string;
+  questionText: string;
+  choices: string[]; // JSON string array of choices
+  correctIndex: number;
+  explanation: string; // why the right answer is correct & why wrong choices are incorrect
+  topicTag: string;
+  difficulty: QuestionDifficulty; // 'Recall' | 'Application'
+  orderIndex?: number;
+  userResponses?: UserResponse[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * User's submission for a Quiz Question.
+ */
+export interface UserResponse {
+  id: string;
+  quizQuestionId: string;
+  selectedIndex: number; // 0-based option index
+  isCorrect: boolean;
+  timeSpentSec?: number;
+  createdAt?: string;
 }

@@ -34,6 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
     { label: 'Plan (Schedule & Exams)', tab: 'plan' as TabType },
     { label: 'Progress & Stats', tab: 'progress' as TabType },
     { label: 'Student Profile', tab: 'profile' as TabType },
+    { label: '🧪 Dev Test Suite (/debug-test-suite)', tab: 'debug_test_suite' as TabType },
     { label: '✨ Replay Welcome Tour', action: () => replayGuide('main') },
     { label: '🔄 Reset All Tours & Guides', action: () => resetAllGuides() },
     { label: '🎓 How It Works (Student Guide)', action: () => onOpenGuide && onOpenGuide() },

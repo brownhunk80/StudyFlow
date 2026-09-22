@@ -6,6 +6,9 @@ import {
   ChapterTopicItem,
   FeynmanRecordResult,
   HandwrittenConversionResult,
+  PracticeAnswerEvaluation,
+  PracticeMode,
+  PracticeQuestion,
   RecallVerificationResult,
   SpacedRevisionPlan,
   SpeechRecallGapAnalysis,
@@ -108,6 +111,12 @@ export async function fetchRecallVerification(params: {
   paperImage?: { data: string; mimeType: string };
   referenceMaterialsText?: string;
   chapterNotesSummary?: string;
+  topicId?: string;
+  topicTitle?: string;
+  topicKeyPoints?: string[];
+  topicKeyFormula?: string;
+  questionText?: string;
+  topics?: ChapterTopicItem[];
 }): Promise<RecallVerificationResult> {
   const res = await fetch('/api/ai/verify-recall', {
     method: 'POST',
@@ -121,11 +130,43 @@ export async function fetchRecallVerification(params: {
   return res.json();
 }
 
-export async function fetchChapterTest(chapterName: string, subject: string, questionCount = 4): Promise<ChapterTest> {
+export async function fetchChapterTest(
+  chapterName: string,
+  subject: string,
+  questionCount = 4,
+  options?: {
+    topicId?: string;
+    topicTitle?: string;
+    topicKeyPoints?: string[];
+    topicKeyFormula?: string;
+    topics?: ChapterTopicItem[];
+    materials?: ChapterMaterial[];
+    followUpFor?: {
+      questionId?: string;
+      originalQuestion?: string;
+      concept?: string;
+      skill?: string;
+      studentAnswer?: string;
+      topicId?: string;
+      topicTitle?: string;
+    };
+  }
+): Promise<ChapterTest> {
   const res = await fetch('/api/ai/chapter-test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chapterName, subject, questionCount }),
+    body: JSON.stringify({
+      chapterName,
+      subject,
+      questionCount,
+      topicId: options?.topicId,
+      topicTitle: options?.topicTitle,
+      topicKeyPoints: options?.topicKeyPoints,
+      topicKeyFormula: options?.topicKeyFormula,
+      topics: options?.topics,
+      materials: options?.materials,
+      followUpFor: options?.followUpFor,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to generate diagnostic test' }));
@@ -227,9 +268,98 @@ export async function fetchExtractChapterTopics(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to extract topics' }));
-    throw new Error(err.error || 'Failed to extract chapter topics');
+    throw new Error(err.message || err.error || 'Failed to extract chapter topics');
   }
   return res.json();
 }
+
+export async function fetchPracticeSession(params: {
+  chapterName: string;
+  subject?: string;
+  mode?: PracticeMode;
+  materials?: ChapterMaterial[];
+  topic?: string;
+  performanceHistory?: { weakConcepts?: string[] };
+}): Promise<{
+  chapterName: string;
+  subject: string;
+  mode: PracticeMode;
+  sourceLabel: string;
+  questions: PracticeQuestion[];
+}> {
+  const res = await fetch('/api/ai/practice-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to generate practice session' }));
+    throw new Error(err.error || 'Failed to generate practice session');
+  }
+  return res.json();
+}
+
+export async function fetchEvaluatePracticeAnswer(params: {
+  question: PracticeQuestion;
+  studentAnswer: string;
+  workingNotes?: string;
+}): Promise<PracticeAnswerEvaluation> {
+  const res = await fetch('/api/ai/evaluate-practice-answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to evaluate practice answer' }));
+    throw new Error(err.error || 'Failed to evaluate practice answer');
+  }
+  return res.json();
+}
+
+export async function fetchSimilarQuestion(params: {
+  question: PracticeQuestion;
+  identifiedMistake?: string | null;
+}): Promise<PracticeQuestion> {
+  const res = await fetch('/api/ai/similar-question', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to generate similar question' }));
+    throw new Error(err.error || 'Failed to generate similar question');
+  }
+  return res.json();
+}
+
+export interface MultimodalEvaluationResult {
+  isCorrect: boolean;
+  score: number;
+  transcription?: string;
+  stepFeedback: string[];
+  missingPoints: string[];
+}
+
+export async function fetchEvaluateAnswer(params: {
+  questionText: string;
+  modelAnswer: string;
+  topicTag?: string;
+  typedText?: string;
+  spokenTranscript?: string;
+  imageBase64?: string;
+  imageMimeType?: string;
+}): Promise<MultimodalEvaluationResult> {
+  const res = await fetch('/api/evaluate/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to evaluate answer' }));
+    throw new Error(err.message || err.error || 'Failed to evaluate answer');
+  }
+  return res.json();
+}
+
 
 

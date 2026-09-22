@@ -21,7 +21,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [subject, setSubject] = useState(subjects[0]?.name || 'Maths');
   const [durationMin, setDurationMin] = useState<number>(45);
   const [priority, setPriority] = useState<'High Priority' | 'Medium' | 'Normal'>('High Priority');
-  const [type, setType] = useState<'Revise' | 'Practice' | 'Exam Prep' | 'Homework'>('Revise');
+  const [type, setType] = useState<TaskItem['type']>('Revise');
   const [dateCategory, setDateCategory] = useState<'today' | 'upcoming'>('today');
 
   useEffect(() => {

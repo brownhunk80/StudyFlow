@@ -40,7 +40,7 @@ export const StudentMasteryGuideModal: React.FC<StudentMasteryGuideModalProps> =
   const [isPlaying, setIsPlaying] = useState(true);
   const [activeTab, setActiveTab] = useState<'walkthrough' | 'tips' | 'faq'>('walkthrough');
 
-  // 4 Core Simplified Steps for 8th to 12th graders (Learn -> Recall -> Notes/Gaps -> RemNote Flashcards)
+  // 4 Core Simplified Steps for 8th to 12th graders (Learn -> Recall -> Notes/Gaps -> Recall Deck)
   const steps = [
     {
       id: 'step-1',
@@ -111,23 +111,23 @@ export const StudentMasteryGuideModal: React.FC<StudentMasteryGuideModalProps> =
     {
       id: 'step-4',
       stepNumber: 4,
-      tag: 'STEP 4: REMNOTE FLASHCARDS',
+      tag: 'STEP 4: RECALL DECK',
       title: 'Automated Flashcards & Exam Date Pacing',
       summary:
-        'RemNote-style flashcards generated from your gaps, with spaced repetition calibrated to your exam countdown.',
+        'StudyFlow flashcards generated from your gaps, with spaced repetition calibrated to your exam countdown.',
       icon: Brain,
       color: 'from-emerald-600 to-teal-600',
       badgeBg: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300',
       description:
         'Automated concept cards and Cloze deletions (e.g. "Lens power unit is {{Diopters}}"). Features dual-mode spaced repetition: Regular Spaced Review (1d, 3d, 7d, 14d) or Exam Countdown Mode (cards repeat 2-3x before your exam date so nothing slips through).',
       studentTip:
-        '💡 RemNote Spaced Repetition: Rate cards Again, Hard, Good, or Easy. The algorithm schedules the next review automatically.',
+        '💡 Spaced Repetition: Rate cards Again, Hard, Good, or Easy. The algorithm schedules the next review automatically.',
       visualPreview: {
-        headline: 'RemNote Spaced Repetition',
+        headline: 'StudyFlow Spaced Repetition',
         sub: 'Exam in 14 Days • Calibrated Pacing',
         snippet:
           'Card: "What is the formula for Lens Power? [P = 1/f in meters]"\nRatings: Again (1d) | Hard (3d) | Good (7d) | Easy (13d [Before Exam])\nSync: Added to Daily Recall Tab',
-        typeBadge: 'RemNote Cards & Exam Mode',
+        typeBadge: 'Recall Cards & Exam Mode',
       },
     },
   ];

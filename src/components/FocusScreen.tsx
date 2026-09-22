@@ -32,8 +32,11 @@ import {
   Edit3,
   RefreshCw,
   Plus,
+  Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { StudyFlowChapterWorkspace } from './studyflow/StudyFlowChapterWorkspace';
 import {
   TaskItem,
   FocusSession,
@@ -58,6 +61,8 @@ import {
 } from '../data/chapterTopicsData';
 import { ChapterMaterialsManager } from './ChapterMaterialsManager';
 import { ChapterTopicExtractor } from './ChapterTopicExtractor';
+import { ChapterTopicList } from './ChapterTopicList';
+import { TopicPickerForRevision, SelectedTopicRevisionBanner } from './TopicPickerForRevision';
 import { ELI5Explainer } from './ELI5Explainer';
 import { SAMPLE_HANDWRITTEN_NOTE_SVG } from '../data/sampleHandwrittenNote';
 import { useOnboarding } from '../context/OnboardingContext';
@@ -66,6 +71,7 @@ import {
   fetchRecallVerification,
   fetchConvertHandwrittenNotes,
   fetchChapterNotes,
+  fetchExtractChapterTopics,
 } from '../utils/aiClient';
 import {
   calculateExamReadiness,
@@ -115,6 +121,9 @@ export interface FocusScreenProps {
   ) => void;
   onAddChapter?: (examId: string, chapterName: string) => void;
   onScheduleRevisionTasks?: (tasks: Array<Omit<TaskItem, 'id' | 'completed'>>) => void;
+  onDeleteChapter?: (chapterId: string, examId?: string) => void;
+  onDeleteTopic?: (topicId: string, chapterId?: string, examId?: string) => void;
+  onDeleteSubject?: (subjectId: string) => void;
 }
 
 export const FocusScreen: React.FC<FocusScreenProps> = ({
@@ -138,6 +147,9 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   onAddFlashcards,
   onAddChapter,
   onScheduleRevisionTasks,
+  onDeleteChapter,
+  onDeleteTopic,
+  onDeleteSubject,
 }) => {
   // Navigation hierarchy:
   // Level 0: Landing (all subjects + today's recommended plan)
@@ -145,6 +157,8 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   // Level 2: Chapter Workspace (STUDY → REVISION → UPDATE NOTES)
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [chapterToDelete, setChapterToDelete] = useState<{ id: string; name: string; examId?: string } | null>(null);
+  const [isConfirmingDeleteSubject, setIsConfirmingDeleteSubject] = useState(false);
 
   // Chapter Workspace stage: 'study' | 'revision' | 'update_notes'
   const [activeStage, setActiveStage] = useState<'study' | 'revision' | 'update_notes'>('study');
@@ -193,6 +207,11 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   // New chapter inline input
   const [isAddingChapter, setIsAddingChapter] = useState(false);
   const [newChapterName, setNewChapterName] = useState('');
+
+  // Chapter Topics state (SUBJECT → CHAPTER → TOPICS)
+  const [isExtractingTopics, setIsExtractingTopics] = useState(false);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [selectedRevisionTopic, setSelectedRevisionTopic] = useState<ChapterTopicItem | null>(null);
 
   // Find active subject and exam
   const currentSubject = useMemo(() => {
@@ -282,6 +301,35 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
       setTimerSecondsLeft(25 * 60);
       setIsTimerRunning(false);
       setNotesFinalizedNotice(false);
+    }
+  }, [activeChapter?.id]);
+
+  // Auto-extract topics if active chapter currently has no topics mapped
+  const handleTriggerAutoExtractTopics = async () => {
+    if (!activeChapter) return;
+    setIsExtractingTopics(true);
+    try {
+      const result = await fetchExtractChapterTopics(
+        activeChapter.name,
+        currentSubject?.name || 'General',
+        activeChapter.materials || [],
+        currentExam?.name
+      );
+      if (result && Array.isArray(result.topics) && result.topics.length > 0) {
+        if (onUpdateChapterTopics) {
+          onUpdateChapterTopics(activeChapter.id, result.topics, currentExam?.id);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Auto-extract chapter topics notification:', err?.message || err);
+    } finally {
+      setIsExtractingTopics(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeChapter && (!activeChapter.topics || activeChapter.topics.length === 0)) {
+      handleTriggerAutoExtractTopics();
     }
   }, [activeChapter?.id]);
 
@@ -440,6 +488,15 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
     setIsVerifyingRecall(true);
     setVerificationError(null);
 
+    const targetTopic = selectedRevisionTopic || (activeChapter?.topics?.length ? activeChapter.topics[0] : null);
+    const topicFormula = targetTopic?.keyFormula;
+    const topicKeyPoints = targetTopic?.keyPoints;
+    const topicPromptQuestion = targetTopic
+      ? (topicFormula
+          ? `State the formula for "${targetTopic.title}", explain when it applies, and solve a calculation using ${topicFormula}${topicKeyPoints && topicKeyPoints.length > 0 ? ` (Conditions: ${topicKeyPoints.join('; ')})` : ''}.`
+          : `In your own words, explain the core mechanism of "${targetTopic.title}" and its key conditions${topicKeyPoints && topicKeyPoints.length > 0 ? `: ${topicKeyPoints.join('; ')}` : '.'}`)
+      : undefined;
+
     try {
       // Gather reference text from curated content & materials
       const referenceNotes =
@@ -456,6 +513,12 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
         paperImage: paperImg,
         referenceMaterialsText: referenceNotes,
         chapterNotesSummary: studentCustomNotes || curatedContent.overview,
+        topicId: targetTopic?.id,
+        topicTitle: targetTopic?.title,
+        topicKeyPoints: topicKeyPoints,
+        topicKeyFormula: topicFormula,
+        questionText: topicPromptQuestion,
+        topics: activeChapter.topics || [],
       });
 
       setRecallVerificationResult(result);
@@ -621,84 +684,12 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                 <PageGuideButton guideKey="learn" label="How Learn works" />
               </div>
               <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                Start today's scheduled lesson or choose any subject folder below.
+                Choose a subject folder below to begin your study session.
               </p>
             </div>
           </div>
 
-          {/* SECTION A: TODAY'S RECOMMENDED LEARNING */}
-          {recommendedLearnTask ? (
-            <section data-tour="learn-today" className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-indigo-100 dark:border-indigo-900/60 shadow-xs relative overflow-hidden">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
-                    Continue Today's Plan
-                  </span>
-                  <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                    <Clock className="w-3.5 h-3.5" />
-                    ~{recommendedLearnTask.durationMin || 25} min
-                  </span>
-                </div>
-                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
-                  Recommended
-                </span>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <div className="text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
-                    {recommendedLearnTask.subject || 'Subject'}
-                  </div>
-                  <h2 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">
-                    {recommendedLearnTask.chapter || recommendedLearnTask.title}
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md line-clamp-2">
-                    Study core concepts, verify your understanding, and finalize your chapter notes.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => {
-                    const subMatch = subjects.find(
-                      (s) => s.name.toLowerCase() === (recommendedLearnTask.subject || '').toLowerCase()
-                    ) || subjects[0];
-                    if (subMatch) {
-                      setSelectedSubjectId(subMatch.id);
-                    }
-                    setSelectedChapterId(recommendedLearnTask.chapter || recommendedLearnTask.chapterId || null);
-                    setActiveStage('study');
-                  }}
-                  className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm shadow-xs transition cursor-pointer flex items-center justify-center gap-2 shrink-0"
-                >
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>START</span>
-                </button>
-              </div>
-            </section>
-          ) : (
-            <section data-tour="learn-today" className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  Today's Study Plan
-                </span>
-                <h2 className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                  No Study Lessons Scheduled
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md">
-                  Add an exam in the Plan tab to generate your daily study schedule, or pick a subject folder below.
-                </p>
-              </div>
-              <button
-                onClick={() => onNavigateToTab?.('plan')}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Go to Plan</span>
-              </button>
-            </section>
-          )}
-
-          {/* SECTION B: ALL SUBJECTS */}
+          {/* PRIMARY FOCUS: ALL SUBJECTS */}
           <section data-tour="learn-subjects" className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -824,12 +815,26 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
               <span>All Subjects</span>
             </button>
 
-            {currentExam && (
-              <span className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5" />
-                {currentExam.daysLeft === 0 ? 'Exam Today' : `${currentExam.daysLeft}d to Exam`}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {currentExam && (
+                <span className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" />
+                  {currentExam.daysLeft === 0 ? 'Exam Today' : `${currentExam.daysLeft}d to Exam`}
+                </span>
+              )}
+
+              {onDeleteSubject && currentSubject && (
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingDeleteSubject(true)}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 dark:hover:bg-rose-950/40 dark:hover:border-rose-900 transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                  title={`Delete ${currentSubject.name} Folder`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden xs:inline">Delete Folder</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Subject Header Card */}
@@ -842,11 +847,24 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                 <Folder className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-slate-900 dark:text-white">
-                  {currentSubject?.name}
-                </h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-black text-slate-900 dark:text-white">
+                    {currentSubject?.name}
+                  </h1>
+                  {onDeleteSubject && currentSubject && (
+                    <button
+                      type="button"
+                      onClick={() => setIsConfirmingDeleteSubject(true)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                      title={`Delete ${currentSubject.name} Folder`}
+                      aria-label={`Delete ${currentSubject.name} Folder`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {currentChapters.length} Chapters in this folder
+                  {currentChapters.length} {currentChapters.length === 1 ? 'Chapter' : 'Chapters'} in this folder
                 </p>
               </div>
             </div>
@@ -855,8 +873,13 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
               <div className="text-right hidden sm:block">
                 <div className="text-[11px] font-bold text-slate-400">Exam Readiness</div>
                 <div className="text-lg font-black text-indigo-600 dark:text-indigo-400">
-                  {calculateExamReadiness(currentExam).overallScore}%
+                  {currentChapters.length === 0
+                    ? '—'
+                    : `${calculateExamReadiness({ ...currentExam, chapters: currentChapters }, flashcards, tasks).overallScore}%`}
                 </div>
+                {currentChapters.length === 0 && (
+                  <div className="text-[10px] text-slate-400 font-medium">No Data</div>
+                )}
               </div>
             )}
           </div>
@@ -983,22 +1006,117 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                     </div>
                   </div>
 
-                  <button className="px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 group-hover:bg-indigo-600 group-hover:text-white text-slate-700 dark:text-slate-300 text-xs font-bold transition flex items-center gap-1 shrink-0">
-                    <span>Study</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {onDeleteChapter && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setChapterToDelete({
+                            id: chap.id,
+                            name: chap.name,
+                            examId: currentExam?.id,
+                          });
+                        }}
+                        className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                        title="Delete Chapter"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button className="px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 group-hover:bg-indigo-600 group-hover:text-white text-slate-700 dark:text-slate-300 text-xs font-bold transition flex items-center gap-1">
+                      <span>Study</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* Confirmation modal for chapter deletion inside subject folder */}
+        <DeleteConfirmModal
+          isOpen={Boolean(chapterToDelete)}
+          type="chapter"
+          itemName={chapterToDelete?.name || ''}
+          onCancel={() => setChapterToDelete(null)}
+          onConfirm={() => {
+            if (chapterToDelete && onDeleteChapter) {
+              onDeleteChapter(chapterToDelete.id, chapterToDelete.examId);
+              if (selectedChapterId === chapterToDelete.id) {
+                setSelectedChapterId(null);
+              }
+              setChapterToDelete(null);
+            }
+          }}
+        />
+
+        {/* Confirmation modal for subject folder deletion */}
+        <DeleteConfirmModal
+          isOpen={isConfirmingDeleteSubject}
+          type="subject"
+          itemName={currentSubject?.name || 'Subject'}
+          customTitle={`Delete ${currentSubject?.name || 'Subject'}?`}
+          customMessage={`Delete ${currentSubject?.name || 'Subject'}? This will permanently remove this subject and all its chapters, checkpoints, and review history.`}
+          onCancel={() => setIsConfirmingDeleteSubject(false)}
+          onConfirm={() => {
+            if (currentSubject && onDeleteSubject) {
+              const idToDelete = currentSubject.id;
+              onDeleteSubject(idToDelete);
+              setSelectedSubjectId(null);
+              setSelectedChapterId(null);
+            }
+            setIsConfirmingDeleteSubject(false);
+          }}
+        />
       </div>
     );
   }
 
   // =========================================================================
-  // RENDER LEVEL 2: CHAPTER WORKSPACE (STUDY → REVISION → UPDATE NOTES)
+  // RENDER LEVEL 2: CHAPTER WORKSPACE (STUDYFLOW MODULAR ROADMAP & READINESS TRACKER)
   // =========================================================================
+  if (activeChapter) {
+    return (
+      <>
+        <StudyFlowChapterWorkspace
+          chapter={activeChapter}
+          subject={currentSubject}
+          exam={currentExam}
+          onBack={() => setSelectedChapterId(null)}
+          onUpdateChapterStatus={onUpdateChapterStatus}
+          onUpdateChapterTopics={onUpdateChapterTopics}
+          onDeleteChapter={
+            onDeleteChapter
+              ? (id, _name, examId) => {
+                  setChapterToDelete({ id, name: activeChapter.name, examId });
+                }
+              : undefined
+          }
+          onNavigateToTab={onNavigateToTab}
+        />
+
+        {/* Confirmation modal for chapter deletion */}
+        <DeleteConfirmModal
+          isOpen={Boolean(chapterToDelete)}
+          type="chapter"
+          itemName={chapterToDelete?.name || ''}
+          onCancel={() => setChapterToDelete(null)}
+          onConfirm={() => {
+            if (chapterToDelete && onDeleteChapter) {
+              onDeleteChapter(chapterToDelete.id, chapterToDelete.examId);
+              if (selectedChapterId === chapterToDelete.id) {
+                setSelectedChapterId(null);
+              }
+              setChapterToDelete(null);
+            }
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-32 pt-3 px-4 transition-colors">
       <div className="max-w-3xl mx-auto space-y-4">
@@ -1021,6 +1139,22 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
             >
               {formatChapterStatusLabel(activeChapter?.status || 'learning')}
             </span>
+            {onDeleteChapter && activeChapter && (
+              <button
+                type="button"
+                onClick={() =>
+                  setChapterToDelete({
+                    id: activeChapter.id,
+                    name: activeChapter.name,
+                    examId: currentExam?.id,
+                  })
+                }
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                title="Delete this chapter"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1033,6 +1167,55 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
             {activeChapter?.name}
           </h1>
         </div>
+
+        {/* ================================================================= */}
+        {/* SUBJECT → CHAPTER → TOPICS DISPLAY */}
+        {/* ================================================================= */}
+        <ChapterTopicList
+          chapterName={activeChapter?.name || 'Chapter'}
+          topics={activeChapter?.topics || []}
+          selectedTopicId={selectedTopicId}
+          onSelectTopic={(topicId) => setSelectedTopicId(topicId)}
+          onAddTopic={(title, summary) => {
+            if (activeChapter && onUpdateChapterTopics) {
+              const newTopicItem: ChapterTopicItem = {
+                id: 'topic-' + Date.now(),
+                title,
+                summary,
+                status: 'not_started',
+                orderIndex: (activeChapter.topics?.length || 0) + 1,
+              };
+              onUpdateChapterTopics(
+                activeChapter.id,
+                [...(activeChapter.topics || []), newTopicItem],
+                currentExam?.id
+              );
+            }
+          }}
+          onUpdateTopic={(updatedTopic) => {
+            if (activeChapter && onUpdateChapterTopics) {
+              const updatedList = (activeChapter.topics || []).map((t) =>
+                t.id === updatedTopic.id ? updatedTopic : t
+              );
+              onUpdateChapterTopics(activeChapter.id, updatedList, currentExam?.id);
+            }
+          }}
+          onDeleteTopic={(topicId) => {
+            if (onDeleteTopic) {
+              onDeleteTopic(topicId, activeChapter?.id, currentExam?.id);
+            } else if (activeChapter && onUpdateChapterTopics) {
+              const filteredList = (activeChapter.topics || []).filter((t) => t.id !== topicId);
+              onUpdateChapterTopics(activeChapter.id, filteredList, currentExam?.id);
+            }
+          }}
+          onReorderTopics={(reordered) => {
+            if (activeChapter && onUpdateChapterTopics) {
+              onUpdateChapterTopics(activeChapter.id, reordered, currentExam?.id);
+            }
+          }}
+          onAutoExtractTopics={handleTriggerAutoExtractTopics}
+          isExtracting={isExtractingTopics}
+        />
 
         {/* 3-STAGE CONNECTED STEPPER: STUDY → REVISION → UPDATE NOTES */}
         <div className="bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs flex items-center justify-between gap-1">
@@ -1231,6 +1414,19 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                   onUpdateMaterials={(m) => {
                     if (onUpdateChapterMaterials && activeChapter) {
                       onUpdateChapterMaterials(activeChapter.id, m, currentExam?.id);
+                      // Auto-extract topics grounded in the newly uploaded chapter material
+                      fetchExtractChapterTopics(
+                        activeChapter.name,
+                        currentSubject?.name || 'Subject',
+                        m,
+                        currentExam?.name
+                      ).then((res) => {
+                        if (res && Array.isArray(res.topics) && res.topics.length > 0) {
+                          if (onUpdateChapterTopics) {
+                            onUpdateChapterTopics(activeChapter.id, res.topics, currentExam?.id);
+                          }
+                        }
+                      }).catch((e) => console.warn('Material upload auto-extraction:', e));
                     }
                   }}
                 />
@@ -1327,35 +1523,92 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
         )}
 
         {/* ================================================================= */}
-        {/* STAGE 2: REVISION ("Explain What You Remember") */}
+        {/* STAGE 2: REVISION ("Explain What You Remember" - Topic Scoped) */}
         {/* ================================================================= */}
         {activeStage === 'revision' && (
           <div className="space-y-4">
-            {/* Stage Guidance */}
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
-                <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                  Explain What You Remember
-                </h3>
+            {/* If no topics exist on the chapter, block with TopicPickerForRevision */}
+            {(!activeChapter?.topics || activeChapter.topics.length === 0) ? (
+              <TopicPickerForRevision
+                chapter={activeChapter}
+                selectedTopicId={null}
+                onSelectTopic={() => {}}
+                mode="recall"
+                actionLabel="Start Active Recall"
+                onOpenUpload={() => setActiveStage('study')}
+              />
+            ) : !selectedRevisionTopic ? (
+              /* If topics exist but user hasn't selected one yet, show topic picker */
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs">
+                <TopicPickerForRevision
+                  chapter={activeChapter}
+                  selectedTopicId={selectedTopicId}
+                  onSelectTopic={(topic) => {
+                    setSelectedTopicId(topic.id);
+                    setSelectedRevisionTopic(topic);
+                  }}
+                  mode="recall"
+                  actionLabel="Start Active Recall"
+                  onStartRevision={(topic) => {
+                    setSelectedTopicId(topic.id);
+                    setSelectedRevisionTopic(topic);
+                  }}
+                  onOpenUpload={() => setActiveStage('study')}
+                />
               </div>
-              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                Explain the concept in your own words without looking back at your notes. The AI will find what you understood correctly and any important points you missed.
-              </p>
-            </div>
+            ) : (
+              /* Topic selected: Active Recall input */
+              <>
+                {/* Active Topic Banner */}
+                <SelectedTopicRevisionBanner
+                  topic={selectedRevisionTopic}
+                  chapterName={activeChapter.name}
+                  onSwitchTopic={() => setSelectedRevisionTopic(null)}
+                />
 
-            {/* Prompt Card */}
-            <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 text-xs">
-              <div className="font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider text-[10px]">
-                Revision Question
-              </div>
-              <div className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
-                Explain the key principles, formulas, and rules of "{activeChapter?.name}".
-              </div>
-            </div>
+                {/* Stage Guidance */}
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                      Active Retrieval for {selectedRevisionTopic.title}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    Explain the specific topic mechanism without looking at your notes. The AI will evaluate your recall strictly against this topic's curriculum requirements.
+                  </p>
+                </div>
 
-            {/* THREE WAYS TO ANSWER: Speak, Write on Paper, Type */}
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4">
+                {/* Topic Specific Revision Prompt Card */}
+                <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 text-xs">
+                  <div className="font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider text-[10px]">
+                    Topic Revision Prompt
+                  </div>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white mt-1 leading-relaxed">
+                    {selectedRevisionTopic.keyFormula ? (
+                      <>
+                        State the formula for <strong className="text-indigo-600 dark:text-indigo-400">{selectedRevisionTopic.title}</strong>, explain when it applies, and solve a problem using <span className="font-mono bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded border border-indigo-200">{selectedRevisionTopic.keyFormula}</span>.
+                        {selectedRevisionTopic.keyPoints && selectedRevisionTopic.keyPoints.length > 0 && (
+                          <span className="block text-xs font-normal text-slate-600 dark:text-slate-300 mt-1">
+                            Key principles: {selectedRevisionTopic.keyPoints.join('; ')}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        In your own words, explain the core mechanism of <strong className="text-indigo-600 dark:text-indigo-400">{selectedRevisionTopic.title}</strong> and its key conditions.
+                        {selectedRevisionTopic.keyPoints && selectedRevisionTopic.keyPoints.length > 0 && (
+                          <span className="block text-xs font-normal text-slate-600 dark:text-slate-300 mt-1">
+                            Key conditions: {selectedRevisionTopic.keyPoints.join('; ')}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* THREE WAYS TO ANSWER: Speak, Write on Paper, Type */}
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                 <span className="text-xs font-black uppercase tracking-wider text-slate-400">
                   How do you want to answer?
@@ -1602,6 +1855,8 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                 </div>
               </div>
             )}
+              </>
+            )}
           </div>
         )}
 
@@ -1770,6 +2025,23 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
           </div>
         )}
       </div>
+
+      {/* Confirmation modal for chapter deletion */}
+      <DeleteConfirmModal
+        isOpen={Boolean(chapterToDelete)}
+        type="chapter"
+        itemName={chapterToDelete?.name || ''}
+        onCancel={() => setChapterToDelete(null)}
+        onConfirm={() => {
+          if (chapterToDelete && onDeleteChapter) {
+            onDeleteChapter(chapterToDelete.id, chapterToDelete.examId);
+            if (selectedChapterId === chapterToDelete.id) {
+              setSelectedChapterId(null);
+            }
+            setChapterToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };

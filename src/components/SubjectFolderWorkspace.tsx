@@ -32,6 +32,7 @@ import {
   X,
   FileImage,
   Smile,
+  Calculator,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -50,7 +51,10 @@ import {
   VerificationInputMode,
   TaskItem,
   KnowledgeGapItem,
+  ChapterTopicItem,
+  TopicStatus,
 } from '../types';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import {
   getChapterCuratedContent,
   ChapterCuratedContent,
@@ -69,10 +73,15 @@ import {
   formatChapterStatusLabel,
   getChapterStatusColor,
 } from '../utils/examReadiness';
+import { TextbookPracticeEngine } from './TextbookPracticeEngine';
+import { ChapterTopicList } from './ChapterTopicList';
+import { TopicPracticeTestView } from './TopicPracticeTestView';
+import { TopicPickerForRevision, SelectedTopicRevisionBanner } from './TopicPickerForRevision';
 
 export type FolderStep =
   | 'learn'
   | 'recall'
+  | 'practice'
   | 'check_gaps'
   | 'flashcards'
   | 'prepare_notes'
@@ -101,6 +110,8 @@ interface SubjectFolderWorkspaceProps {
   onStartFocusChapter?: (chapter: Chapter, examName: string) => void;
   onNavigateToTab?: (tab: 'home' | 'focus' | 'recall' | 'plan' | 'progress' | 'profile') => void;
   onScheduleRevisionTasks?: (tasks: Array<Omit<TaskItem, 'id' | 'completed'>>) => void;
+  onDeleteChapter?: (chapterId: string, examId?: string) => void;
+  onDeleteSubject?: (subjectId: string) => void;
 }
 
 export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
@@ -121,11 +132,15 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
   onStartFocusChapter,
   onNavigateToTab,
   onScheduleRevisionTasks,
+  onDeleteChapter,
+  onDeleteSubject,
 }) => {
   // Current active chapter
   const [selectedChapterId, setSelectedChapterId] = useState<string>(
     chapters[0]?.id || 'chap-1'
   );
+  const [chapterToDelete, setChapterToDelete] = useState<Chapter | null>(null);
+  const [isConfirmingDeleteSubject, setIsConfirmingDeleteSubject] = useState(false);
 
   const activeChapter: Chapter = useMemo(() => {
     return (
@@ -164,6 +179,13 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
       curatedContent.topics[0]
     );
   }, [curatedContent, selectedTopicId]);
+
+  const effectiveChapterTopics = useMemo<ChapterTopicItem[]>(() => {
+    return activeChapter?.topics || [];
+  }, [activeChapter?.topics]);
+
+  const [recallSubView, setRecallSubView] = useState<'retrieval' | 'practice_test'>('retrieval');
+  const [showTopicDrawer, setShowTopicDrawer] = useState(false);
 
   // ================= Step 1: Pomodoro Timer =================
   const [pomodoroSeconds, setPomodoroSeconds] = useState(25 * 60);
@@ -343,6 +365,16 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         .map((m) => `[${m.title}]: ${m.content || ''}`)
         .join('\n\n') || curatedContent.overview;
 
+      const targetTopicObj =
+        effectiveChapterTopics.find((t) => t.id === selectedTopicId) ||
+        effectiveChapterTopics[0];
+
+      const questionText = targetTopicObj?.keyFormula
+        ? `State the formula for "${targetTopicObj.title}" (${targetTopicObj.keyFormula}), explain when it applies, and solve: Calculate the result using the formula.`
+        : targetTopicObj
+          ? `In your own words, explain the core mechanism of "${targetTopicObj.title}" and its key conditions.`
+          : undefined;
+
       const result = await fetchRecallVerification({
         chapterName: activeChapter.name,
         subject: subjectName,
@@ -352,6 +384,12 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         paperImage: recallPaperImage || undefined,
         referenceMaterialsText: textbookContent,
         chapterNotesSummary: studentCustomNotes || curatedContent.overview,
+        topicId: targetTopicObj?.id,
+        topicTitle: targetTopicObj?.title,
+        topicKeyPoints: targetTopicObj?.keyPoints,
+        topicKeyFormula: targetTopicObj?.keyFormula,
+        questionText,
+        topics: effectiveChapterTopics,
       });
 
       setRecallResult(result);
@@ -655,7 +693,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
     setNotesUpdatedSuccess(true);
   };
 
-  // ================= Step 6: RemNote Flashcards & Spaced Repetition =================
+  // ================= Step 6: StudyFlow Recall Deck & Spaced Repetition =================
   const [isExamPacingMode, setIsExamPacingMode] = useState<boolean>(true);
   const daysUntilExam = exam?.daysLeft ?? 14;
 
@@ -668,10 +706,10 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
 
     if (existing.length > 0) return existing;
 
-    // Default RemNote-style cards with Cloze deletions and concept questions
+    // Default StudyFlow cards with Cloze deletions and concept questions
     return [
       {
-        id: `rem-fc-${activeChapter.id}-1`,
+        id: `studyflow-fc-${activeChapter.id}-1`,
         deckId: decks[0]?.id || 'deck-default',
         subject: subjectName,
         chapter: activeChapter.name,
@@ -687,7 +725,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         status: 'learning',
       },
       {
-        id: `rem-fc-${activeChapter.id}-2`,
+        id: `studyflow-fc-${activeChapter.id}-2`,
         deckId: decks[0]?.id || 'deck-default',
         subject: subjectName,
         chapter: activeChapter.name,
@@ -744,7 +782,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
 
   const currentCard = activeCardsList[currentCardIdx] || activeCardsList[0];
 
-  // Calculate RemNote interval predictions for the 4 rating buttons
+  // Calculate interval predictions for the 4 rating buttons
   const getIntervalPreview = (rating: RecallRating) => {
     if (isExamPacingMode && daysUntilExam > 0) {
       // Compressed intervals calibrated to exam date
@@ -763,7 +801,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
       }
     }
 
-    // Standard Regular Spaced Repetition (RemNote / SM-2)
+    // Standard Regular Spaced Repetition (SM-2)
     if (rating === 'again') return '10 min / 1d';
     if (rating === 'hard') return 'in 2 days';
     if (rating === 'good') return 'in 4 days';
@@ -785,7 +823,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
     }
   };
 
-  // Keyboard shortcut listener for RemNote feel: Space to flip, 1-4 for ratings
+  // Keyboard shortcut listener for StudyFlow recall feel: Space to flip, 1-4 for ratings
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (activeStep !== 'flashcards') return;
@@ -817,6 +855,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         clozeHint: c.clozeHint,
         subject: subjectName,
         chapter: activeChapter.name,
+        dueDate: new Date().toISOString(),
       }));
       onAddFlashcards(cardsToSync);
     }
@@ -824,12 +863,12 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
     setTimeout(() => setSyncedDeckNotice(false), 3000);
   };
 
-  // Generate RemNote cards from gaps
+  // Generate Recall Deck cards from gaps
   const handleGenerateCardsFromGaps = () => {
     if (!recallResult?.criticalGaps || recallResult.criticalGaps.length === 0) return;
 
     const newCards: Flashcard[] = recallResult.criticalGaps.map((gap, i) => ({
-      id: `rem-gen-${Date.now()}-${i}`,
+      id: `studyflow-gen-${Date.now()}-${i}`,
       deckId: decks[0]?.id || 'deck-default',
       subject: subjectName,
       chapter: activeChapter.name,
@@ -926,6 +965,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         front: `[Fix Knowledge Gap]: What is the rule and application for "${gap.concept}" in ${activeChapter.name}?`,
         back: `Core rule and diagnostic tips for ${gap.concept}. Pay special attention to signs, conversions, and standard formulas.`,
         clozeHint: `${gap.concept}`,
+        dueDate: new Date().toISOString(),
       }));
       onAddFlashcards(newCards);
     }
@@ -945,7 +985,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
     { id: 'prepare_notes', number: 3, label: 'Prepare Notes' },
     { id: 'check_gaps', number: 4, label: "Find Your Knowledge Gaps" },
     { id: 'update_notes', number: 5, label: 'Update Notes' },
-    { id: 'flashcards', number: 6, label: 'RemNote Flashcards' },
+    { id: 'flashcards', number: 6, label: 'Recall Deck' },
   ];
 
   return (
@@ -1018,6 +1058,18 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 ) : (
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
                 )}
+                {isSelected && onDeleteChapter && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setChapterToDelete(chap);
+                    }}
+                    className="p-0.5 rounded hover:bg-white/20 text-white/80 hover:text-white transition ml-0.5"
+                    title="Delete Chapter"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </span>
+                )}
               </button>
             );
           })}
@@ -1088,6 +1140,16 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${getChapterStatusColor(activeChapter.status)}`}>
                   {formatChapterStatusLabel(activeChapter.status)}
                 </span>
+                {onDeleteChapter && chapters.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setChapterToDelete(activeChapter)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                    title="Delete Chapter"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
               <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
                 # {activeChapter.name}
@@ -1106,7 +1168,9 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
               </div>
               <button
                 onClick={() => {
-                  if (onStartFocusChapter) {
+                  if (recommendedNextAction.type === 'PRACTICE') {
+                    setActiveStep('practice');
+                  } else if (onStartFocusChapter) {
                     onStartFocusChapter(activeChapter, exam?.name || subjectName);
                   } else {
                     setActiveStep('learn');
@@ -1130,6 +1194,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
             {[
               { id: 'learn' as FolderStep, label: 'Learn', icon: BookOpen, desc: 'Understand concept' },
               { id: 'recall' as FolderStep, label: 'Active Recall', icon: Mic, desc: 'Close notes & retrieve' },
+              { id: 'practice' as FolderStep, label: 'Textbook Practice', icon: Calculator, desc: 'Solve exercises & numericals' },
               { id: 'check_gaps' as FolderStep, label: 'Find Your Knowledge Gaps', icon: Sparkles, desc: 'Track & fix gaps' },
               { id: 'flashcards' as FolderStep, label: 'Flashcards', icon: Brain, desc: 'Review cards' },
               { id: 'prepare_notes' as FolderStep, label: 'Study Notes', icon: FileText, desc: 'Summary & diagrams' },
@@ -1563,7 +1628,121 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         {/* ================= STEP 2: RECALL (THE BLURTING METHOD) ================= */}
         {activeStep === 'recall' && (
           <div className="space-y-6">
-            {recallResult ? (
+            {effectiveChapterTopics.length === 0 ? (
+              <TopicPickerForRevision
+                chapter={activeChapter}
+                selectedTopicId={null}
+                onSelectTopic={() => {}}
+                mode="recall"
+                actionLabel="Start Active Recall"
+                onOpenUpload={() => setActiveStep('learn')}
+              />
+            ) : (
+              <>
+                {/* Active Selected Topic Revision Banner */}
+                {(() => {
+                  const activeTopic =
+                    effectiveChapterTopics.find((t) => t.id === selectedTopicId) ||
+                    effectiveChapterTopics[0];
+                  return (
+                    <SelectedTopicRevisionBanner
+                      topic={activeTopic}
+                      chapterName={activeChapter.name}
+                      onSwitchTopic={() => setShowTopicDrawer(true)}
+                    />
+                  );
+                })()}
+
+                {/* Topic Scope & Sub-tab Switcher Bar */}
+                <div className="bg-indigo-50/70 dark:bg-indigo-950/40 p-4 rounded-3xl border border-indigo-100 dark:border-indigo-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                        Topic-Scoped Active Recall & Practice
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                        Curriculum-Aligned
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white mt-0.5">
+                      Anchor:{' '}
+                      {(effectiveChapterTopics.find((t) => t.id === selectedTopicId) || effectiveChapterTopics[0])?.title}
+                    </h3>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTopicDrawer(!showTopicDrawer)}
+                      className="px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>{showTopicDrawer ? 'Hide Topics' : 'Manage Topics'}</span>
+                    </button>
+                  </div>
+                </div>
+
+            {/* Collapsible Topic List Drawer */}
+            {showTopicDrawer && (
+              <div className="p-4 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <ChapterTopicList
+                  topics={effectiveChapterTopics}
+                  chapterName={activeChapter.name}
+                  selectedTopicId={selectedTopicId}
+                  onSelectTopic={(id) => setSelectedTopicId(id)}
+                  onStartRevisionTopic={(t) => {
+                    setSelectedTopicId(t.id);
+                    setRecallSubView('practice_test');
+                    setShowTopicDrawer(false);
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Sub-view switcher: Memory Blurting vs Topic Practice Test */}
+            <div className="flex items-center gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setRecallSubView('retrieval')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  recallSubView === 'retrieval'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Mic className="w-4 h-4" />
+                <span>Active Retrieval (Blurting, Paper, Audio)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecallSubView('practice_test')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  recallSubView === 'practice_test'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Calculator className="w-4 h-4" />
+                <span>Solve Practice Questions (Curriculum-Aligned)</span>
+              </button>
+            </div>
+
+            {recallSubView === 'practice_test' ? (
+              <TopicPracticeTestView
+                chapterName={activeChapter.name}
+                subject={subjectName}
+                topics={effectiveChapterTopics}
+                selectedTopicId={selectedTopicId}
+                onSelectTopic={(id) => setSelectedTopicId(id)}
+                onCompleteScore={(correct, total) => {
+                  if (onUpdateChapterStatus) {
+                    const score = Math.round((correct / total) * 100);
+                    onUpdateChapterStatus(activeChapter.id, score >= 75 ? 'mastered' : 'need_work', score);
+                  }
+                }}
+              />
+            ) : (
+            recallResult ? (
               /* After submission: Section 14 UI */
               <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
                 <div>
@@ -1674,17 +1853,12 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
 
                   <button
                     onClick={() => {
-                      handleFixGaps();
-                      if (onStartFocusChapter) {
-                        onStartFocusChapter(activeChapter, exam?.name || subjectName);
-                      } else {
-                        setActiveStep('check_gaps');
-                      }
+                      setActiveStep('practice');
                     }}
                     className="w-full sm:flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <Play className="w-4 h-4 fill-white" />
-                    <span>PRACTICE WEAK AREAS</span>
+                    <Calculator className="w-4 h-4 text-white" />
+                    <span>PRACTICE TEXTBOOK PROBLEMS</span>
                   </button>
                 </div>
 
@@ -1870,7 +2044,34 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                   )}
                 </button>
               </div>
+            )
+          )}
+              </>
             )}
+          </div>
+        )}
+
+        {/* ================= STEP 2B: TEXTBOOK-ALIGNED PRACTICE ================= */}
+        {activeStep === 'practice' && (
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden p-2 sm:p-4">
+            <TextbookPracticeEngine
+              chapterId={activeChapter.id}
+              chapterName={activeChapter.name}
+              subject={subjectName}
+              materials={materials}
+              examName={exam?.name}
+              curriculumContext={{
+                board: (exam as any)?.board || 'Standard Curriculum',
+                classLevel: (exam as any)?.grade || 'Class 10',
+                textbookName: (activeChapter as { textbookName?: string }).textbookName || 'Core Textbook',
+              }}
+              onCompleteSession={(res) => {
+                if (onUpdateChapterStatus) {
+                  const status = res.score / res.total >= 0.8 ? 'mastered' : 'needs_practice';
+                  onUpdateChapterStatus(activeChapter.id, status, Math.round((res.score / res.total) * 100));
+                }
+              }}
+            />
           </div>
         )}
 
@@ -2590,7 +2791,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                   onClick={() => setActiveStep('flashcards')}
                   className="px-5 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-2 shadow-xs cursor-pointer"
                 >
-                  <span>Step 6: Practice RemNote Flashcards</span>
+                  <span>Step 6: Practice Recall Deck</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -2598,7 +2799,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
           </div>
         )}
 
-        {/* ================= STEP 6: REMNOTE FLASHCARDS & REVISION ================= */}
+        {/* ================= STEP 6: RECALL DECK & REVISION ================= */}
         {activeStep === 'flashcards' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-5">
@@ -2606,7 +2807,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                      STEP 6: REMNOTE FLASHCARD DRILL
+                      STEP 6: RECALL DECK DRILL
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 text-[10px] font-black">
                       Card {currentCardIdx + 1} of {activeCardsList.length}
@@ -2650,7 +2851,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 </div>
               )}
 
-              {/* RemNote Interactive Card Container */}
+              {/* StudyFlow Interactive Card Container */}
               {currentCard && (
                 <div
                   onClick={() => setIsCardFlipped(!isCardFlipped)}
@@ -2689,7 +2890,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                         </div>
                         {currentCard.notes && (
                           <div className="p-3 rounded-xl bg-white/10 text-xs text-indigo-200 font-medium border border-white/10">
-                            💡 RemNote Tip: {currentCard.notes}
+                            💡 Study Tip: {currentCard.notes}
                           </div>
                         )}
                       </div>
@@ -2704,7 +2905,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 </div>
               )}
 
-              {/* RemNote Rating Buttons */}
+              {/* Recall Rating Buttons */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
                 <button
                   onClick={() => handleRateFlashcard('again')}
@@ -2754,7 +2955,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                   className="px-3.5 py-2 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 text-xs font-bold border border-purple-200 dark:border-purple-800 flex items-center gap-1.5 transition cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate RemNote Cards from Gaps</span>
+                  <span>Generate Recall Deck Cards from Gaps</span>
                 </button>
 
                 <button
@@ -2828,6 +3029,24 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation modal for chapter deletion */}
+      <DeleteConfirmModal
+        isOpen={Boolean(chapterToDelete)}
+        type="chapter"
+        itemName={chapterToDelete?.name || ''}
+        onCancel={() => setChapterToDelete(null)}
+        onConfirm={() => {
+          if (chapterToDelete && onDeleteChapter) {
+            onDeleteChapter(chapterToDelete.id, exam?.id);
+            const remaining = chapters.filter((c) => c.id !== chapterToDelete.id);
+            if (remaining.length > 0) {
+              setSelectedChapterId(remaining[0].id);
+            }
+            setChapterToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };

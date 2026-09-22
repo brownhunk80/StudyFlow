@@ -2,38 +2,118 @@ import { Exam, Chapter, Flashcard, ExamReadinessBreakdown, ActivityType, TaskIte
 import { isCardDue } from './spacedRepetition';
 
 /**
-  * Calculate multi-signal exam readiness based on:
-  * - Chapter Mastery (35%)
-  * - Practice / Test Performance (25%)
-  * - Recall Performance (20%)
-  * - Student Confidence (10%)
-  * - Spaced Repetition Coverage (10%)
-  */
+ * Calculates a single chapter's dynamic readiness score (0 - 100)
+ * derived from granular section completions & quiz scores, test scores, or status.
+ */
+export function getChapterReadinessScore(chapter: Chapter): number {
+  if (typeof chapter.masteryPercentage === 'number' && !isNaN(chapter.masteryPercentage)) {
+    return Math.min(100, Math.max(0, Math.round(chapter.masteryPercentage)));
+  }
+
+  // If chapter has granular sections, calculate average of section retention and quiz scores
+  if (chapter.sections && chapter.sections.length > 0) {
+    const totalSec = chapter.sections.length;
+    const avgSec =
+      chapter.sections.reduce(
+        (acc, s) => acc + (s.isSkipped ? 100 : (s.completionRate || 0)),
+        0
+      ) / totalSec;
+    const quizzes = chapter.sections.flatMap((s) => s.quizzes || []);
+    if (quizzes.length > 0) {
+      const avgQuiz = quizzes.reduce((acc, q) => acc + (q.score || 0), 0) / quizzes.length;
+      return Math.min(100, Math.max(0, Math.round(avgSec * 0.6 + avgQuiz * 0.4)));
+    }
+    return Math.min(100, Math.max(0, Math.round(avgSec)));
+  }
+
+  // If test or practice scores exist
+  const score = chapter.testScore ?? chapter.lastTestScore ?? chapter.practiceScore;
+  if (score !== undefined) {
+    return Math.min(100, Math.max(0, Math.round(score)));
+  }
+
+  // Status-based baseline score
+  switch (chapter.status) {
+    case 'mastered':
+      return 95;
+    case 'ready':
+      return 80;
+    case 'needs_practice':
+    case 'need_work':
+      return 48;
+    case 'learning':
+      return 35;
+    case 'not_started':
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Calculate multi-signal exam readiness based on:
+ * - Dynamic Chapter Readiness Average (primary score)
+ * - Chapter Mastery breakdown
+ * - Practice / Test Performance
+ * - Recall Performance
+ * - Student Confidence
+ * - Spaced Repetition Coverage
+ */
 export function calculateExamReadiness(
   exam: Exam,
   allFlashcards: Flashcard[] = [],
   allTasks: TaskItem[] = []
 ): ExamReadinessBreakdown {
   const chapters = exam.chapters || [];
-  const totalChapters = Math.max(chapters.length, 1);
+  
+  // If a folder contains 0 chapters, the score must automatically fall back to 0%
+  if (chapters.length === 0) {
+    return {
+      examId: exam.id,
+      examName: exam.name,
+      overallScore: 0,
+      daysLeft: exam.daysLeft,
+      examDate: exam.examDate,
+      chaptersReady: 0,
+      totalChapters: 0,
+      strongAreas: [],
+      needsWorkAreas: [],
+      reviewDueCards: 0,
+      recommendedNextStep: {
+        title: 'Add Chapters to Begin',
+        taskTitle: 'Add Chapters',
+        chapterName: 'No Chapters',
+        durationMin: 15,
+        activityType: 'LEARN' as ActivityType,
+        reason: 'Start by adding chapters to this subject folder to track exam readiness.',
+      },
+      metrics: {
+        chapterMastery: 0,
+        practiceTest: 0,
+        recallPerformance: 0,
+        confidence: 0,
+        spacedRepetition: 0,
+      },
+    };
+  }
 
-  // 1. Chapter Mastery (35%)
+  const totalChapters = chapters.length;
+
+  // Compute strictly dynamically as the average of the readiness scores of its existing chapters
+  const chapterReadinessScores = chapters.map(getChapterReadinessScore);
+  const avgChapterReadiness = Math.round(
+    chapterReadinessScores.reduce((acc, s) => acc + s, 0) / totalChapters
+  );
+  const overallScore = Math.min(Math.max(avgChapterReadiness, 0), 100);
+
+  // 1. Chapter Mastery
   // Ready or Mastered chapters count as high mastery
   const chaptersReady = chapters.filter(
-    (c) => c.status === 'ready' || c.status === 'mastered'
+    (c) => c.status === 'ready' || c.status === 'mastered' || (c.masteryPercentage || 0) >= 70
   ).length;
   
-  const avgChapterMastery =
-    chapters.reduce((acc, c) => {
-      if (c.masteryPercentage !== undefined) return acc + c.masteryPercentage;
-      if (c.status === 'mastered') return acc + 95;
-      if (c.status === 'ready') return acc + 80;
-      if (c.status === 'needs_practice' || c.status === 'need_work') return acc + 48;
-      if (c.status === 'learning') return acc + 35;
-      return acc + 10;
-    }, 0) / totalChapters;
+  const avgChapterMastery = avgChapterReadiness;
 
-  // 2. Practice & Test Performance (25%)
+  // 2. Practice & Test Performance
   const avgPracticeTest =
     chapters.reduce((acc, c) => {
       const score = c.testScore ?? c.lastTestScore ?? c.practiceScore;
@@ -43,7 +123,7 @@ export function calculateExamReadiness(
       return acc + 50;
     }, 0) / totalChapters;
 
-  // 3. Recall Performance (20%)
+  // 3. Recall Performance
   const examCards = allFlashcards.filter(
     (f) => f.subject.toLowerCase() === exam.name.toLowerCase()
   );
@@ -57,31 +137,19 @@ export function calculateExamReadiness(
         )
       : 70;
 
-  // 4. Confidence (10%) - on 1-5 scale mapped to 0-100
+  // 4. Confidence (1-5 scale mapped to 0-100)
   const avgConfidence =
     chapters.reduce((acc, c) => {
       const conf = c.confidence ?? (c.status === 'mastered' ? 5 : c.status === 'ready' ? 4 : 3);
       return acc + (conf / 5) * 100;
     }, 0) / totalChapters;
 
-  // 5. Spaced Repetition Coverage (10%)
+  // 5. Spaced Repetition Coverage
   const dueCardsForExam = examCards.filter(isCardDue).length;
   const reviewCoverage =
     examCards.length > 0
       ? Math.max(10, Math.round(((examCards.length - dueCardsForExam) / examCards.length) * 100))
       : 75;
-
-  // Weighted sum
-  const calculatedScore = Math.round(
-    avgChapterMastery * 0.35 +
-      avgPracticeTest * 0.25 +
-      recallScore * 0.20 +
-      avgConfidence * 0.10 +
-      reviewCoverage * 0.10
-  );
-
-  // Bound to 0 - 100
-  const overallScore = Math.min(Math.max(calculatedScore, 0), 100);
 
   // Strong vs Needs Work areas
   const strongAreas = chapters

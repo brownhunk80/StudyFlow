@@ -23,6 +23,8 @@ import { SubjectModal } from './components/SubjectModal';
 import { AddExamModal } from './components/AddExamModal';
 import { StudentMasteryGuideModal } from './components/StudentMasteryGuideModal';
 import { SubjectFolderWorkspace } from './components/SubjectFolderWorkspace';
+import { ToastNotification } from './components/ToastNotification';
+import { DevTestSuitePage } from './components/studyflow/DevTestSuitePage';
 import {
   TabType,
   PlanSubTab,
@@ -49,6 +51,7 @@ import {
   initialFlashcardDecks,
 } from './data/initialData';
 import { calculateNextReview, isCardDue } from './utils/spacedRepetition';
+import { fetchExtractChapterTopics } from './utils/aiClient';
 
 const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v4';
 if (typeof window !== 'undefined') {
@@ -97,8 +100,16 @@ export default function App() {
   }, [isDarkMode]);
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<TabType>('home');
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname === '/debug-test-suite' || window.location.hash === '#debug-test-suite') {
+        return 'debug_test_suite';
+      }
+    }
+    return 'home';
+  });
   const [planSubTab, setPlanSubTab] = useState<PlanSubTab>('today');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Application Data States
   const [user, setUser] = useState<UserProfile>(() => {
@@ -518,14 +529,42 @@ export default function App() {
 
   // Handler: Exam Chapters
   const handleAddChapter = (examId: string, chapterName: string) => {
-    const newChap = {
-      id: 'chap-' + Date.now(),
+    const newChapId = 'chap-' + Date.now();
+    const newChap: Chapter = {
+      id: newChapId,
       name: chapterName,
       status: 'not_started' as ChapterStatus,
+      topics: [],
     };
     setExams((prev) =>
       prev.map((e) => (e.id === examId ? { ...e, chapters: [...e.chapters, newChap] } : e))
     );
+
+    // Auto-extract meaningful topics when a chapter is created
+    const targetExam = exams.find((e) => e.id === examId);
+    fetchExtractChapterTopics(
+      chapterName,
+      (targetExam as any)?.subject || targetExam?.name || 'General',
+      [],
+      targetExam?.name
+    )
+      .then((res) => {
+        if (res && Array.isArray(res.topics) && res.topics.length > 0) {
+          setExams((prev) =>
+            prev.map((e) =>
+              e.id === examId
+                ? {
+                    ...e,
+                    chapters: e.chapters.map((c) =>
+                      c.id === newChapId ? { ...c, topics: res.topics } : c
+                    ),
+                  }
+                : e
+            )
+          );
+        }
+      })
+      .catch((err) => console.warn('Auto topic extraction on chapter creation:', err));
   };
 
   const handleToggleChapterStatus = (examId: string, chapterId: string, status: ChapterStatus) => {
@@ -541,17 +580,171 @@ export default function App() {
     );
   };
 
-  const handleDeleteChapter = (examId: string, chapterId: string) => {
+  const handleDeleteChapter = (examIdOrEmpty: string, chapterId: string) => {
+    // 1. Locate chapter and its exam to get names for cascading cleanup
+    let targetChapterName: string | undefined;
+    let targetExamName: string | undefined;
+
+    for (const e of exams) {
+      const found = e.chapters.find((c) => c.id === chapterId);
+      if (found) {
+        targetChapterName = found.name;
+        targetExamName = e.name;
+        break;
+      }
+    }
+
+    // 2. Remove chapter from exams (either by examId or across any exam that has this chapter)
     setExams((prev) =>
-      prev.map((e) =>
-        e.id === examId
-          ? {
-              ...e,
-              chapters: e.chapters.filter((c) => c.id !== chapterId),
-            }
-          : e
-      )
+      prev.map((e) => {
+        if (!examIdOrEmpty || e.id === examIdOrEmpty || e.chapters.some((c) => c.id === chapterId)) {
+          return {
+            ...e,
+            chapters: e.chapters.filter((c) => c.id !== chapterId),
+          };
+        }
+        return e;
+      })
     );
+
+    // 3. Remove all tasks associated with this chapter
+    const normChapName = targetChapterName?.toLowerCase().trim();
+    const normExamName = targetExamName?.toLowerCase().trim();
+
+    setTasks((prev) =>
+      prev.filter((t) => {
+        if (t.chapterId && t.chapterId === chapterId) return false;
+        if (normChapName && t.chapter && t.chapter.toLowerCase().trim() === normChapName) {
+          return false;
+        }
+        if (
+          normChapName &&
+          normExamName &&
+          t.title.toLowerCase().includes(normChapName) &&
+          t.subject.toLowerCase().includes(normExamName)
+        ) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    // 4. Remove all flashcards associated with this chapter
+    setFlashcards((prev) =>
+      prev.filter((c) => {
+        if ((c as any).chapterId && (c as any).chapterId === chapterId) return false;
+        if (normChapName && c.chapter && c.chapter.toLowerCase().trim() === normChapName) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    // 5. If activeFolderSubject was open with this chapter / exam, update it
+    setActiveFolderSubject((prev) => {
+      if (!prev) return null;
+      if (prev.exam) {
+        return {
+          ...prev,
+          exam: {
+            ...prev.exam,
+            chapters: prev.exam.chapters.filter((c) => c.id !== chapterId),
+          },
+        };
+      }
+      return prev;
+    });
+
+    // 6. Show toast notification
+    setToastMessage(`Chapter "${targetChapterName || 'Chapter'}" deleted successfully.`);
+  };
+
+  const handleDeleteTopic = (topicId: string, chapterId?: string, examId?: string) => {
+    let targetTopicTitle: string | undefined;
+    let targetChapterName: string | undefined;
+
+    // Find the topic title and chapter
+    for (const e of exams) {
+      for (const c of e.chapters) {
+        if (!chapterId || c.id === chapterId) {
+          const t = c.topics?.find((top) => top.id === topicId);
+          if (t) {
+            targetTopicTitle = t.title;
+            targetChapterName = c.name;
+            break;
+          }
+        }
+      }
+      if (targetTopicTitle) break;
+    }
+
+    // 1. Remove topic from chapter in exams
+    setExams((prev) =>
+      prev.map((e) => {
+        if (
+          !examId ||
+          e.id === examId ||
+          e.chapters.some((c) => c.id === chapterId || c.topics?.some((t) => t.id === topicId))
+        ) {
+          return {
+            ...e,
+            chapters: e.chapters.map((c) => {
+              if (c.id === chapterId || c.topics?.some((t) => t.id === topicId)) {
+                return {
+                  ...c,
+                  topics: (c.topics || []).filter((t) => t.id !== topicId),
+                };
+              }
+              return c;
+            }),
+          };
+        }
+        return e;
+      })
+    );
+
+    // 2. Remove tasks specifically belonging to this topic (if any)
+    if (targetTopicTitle) {
+      const normTopic = targetTopicTitle.toLowerCase().trim();
+      const normChap = targetChapterName?.toLowerCase().trim();
+      setTasks((prev) =>
+        prev.filter((t) => {
+          const isSameChap =
+            (chapterId && t.chapterId === chapterId) ||
+            (normChap && t.chapter && t.chapter.toLowerCase().trim() === normChap);
+          if (isSameChap) {
+            if (
+              t.title.toLowerCase().includes(normTopic) ||
+              (t.description && t.description.toLowerCase().includes(normTopic))
+            ) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
+
+      // 3. Remove flashcards specifically belonging to this topic (if any)
+      setFlashcards((prev) =>
+        prev.filter((c) => {
+          const isSameChap =
+            (chapterId && (c as any).chapterId === chapterId) ||
+            (normChap && c.chapter && c.chapter.toLowerCase().trim() === normChap);
+          if (isSameChap) {
+            if (
+              c.front.toLowerCase().includes(normTopic) ||
+              (c.notes && c.notes.toLowerCase().includes(normTopic))
+            ) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
+    }
+
+    // 4. Show toast notification
+    setToastMessage(`Topic "${targetTopicTitle || 'Topic'}" deleted successfully.`);
   };
 
   // ================= Active Recall & Spaced Repetition Handlers =================
@@ -914,6 +1107,7 @@ export default function App() {
                 setActiveTab(tab);
               }}
               onScheduleRevisionTasks={handleScheduleRevisionTasks}
+              onDeleteChapter={(chapId, exId) => handleDeleteChapter(exId || '', chapId)}
             />
           ) : (
             <HomeScreen
@@ -939,6 +1133,8 @@ export default function App() {
                   completed: false,
                   dateCategory: 'today',
                   activityType: 'LEARN',
+                  priority: 'High Priority',
+                  type: 'Learn',
                 });
                 setActiveTab('focus');
               }}
@@ -953,6 +1149,7 @@ export default function App() {
               }
               onStartRecallSession={(deckId, subject) => handleStartRecallSession(deckId, subject)}
               onNavigateToRecall={() => setActiveTab('recall')}
+              onNavigateToPlan={() => setActiveTab('plan')}
               onOpenGuide={() => setIsGuideModalOpen(true)}
             />
           ))}
@@ -1074,6 +1271,8 @@ export default function App() {
               setFlashcards((prev) => [...formatted, ...prev]);
             }}
             onAddChapter={(examId, chapterName) => handleAddChapter(examId, chapterName)}
+            onDeleteChapter={(chapId, exId) => handleDeleteChapter(exId || '', chapId)}
+            onDeleteTopic={handleDeleteTopic}
           />
         )}
 
@@ -1136,6 +1335,7 @@ export default function App() {
             onGenerateRecallCards={(newCards) => {
               const formatted: Flashcard[] = newCards.map((c, idx) => ({
                 id: 'card-plan-' + Date.now() + '-' + idx,
+                deckId: decks[0]?.id || 'deck-default',
                 question: c.question,
                 answer: c.answer,
                 front: c.question,
@@ -1222,6 +1422,7 @@ export default function App() {
                 handleScheduleRevisionTasks(generatedTasks);
               }
             }}
+            onDeleteChapter={handleDeleteChapter}
           />
         )}
 
@@ -1247,6 +1448,12 @@ export default function App() {
             onUpdateUser={handleUpdateUser}
             onResetData={handleResetAllData}
           />
+        )}
+
+        {activeTab === 'debug_test_suite' && (
+          <div className="pb-20">
+            <DevTestSuitePage />
+          </div>
         )}
       </main>
 
@@ -1432,14 +1639,42 @@ export default function App() {
       <AddExamModal
         isOpen={isAddExamModalOpen}
         onClose={() => setIsAddExamModalOpen(false)}
-        onAddExam={handleAddExam}
+        subjects={subjects}
+        exams={exams}
+        onAddExamWithChapters={(examData, generatedTasks) => {
+          const daysLeft = Math.max(
+            0,
+            Math.ceil(
+              (new Date(examData.examDate).getTime() - Date.now()) /
+                (1000 * 60 * 60 * 24)
+            )
+          );
+          const newExam: Exam = {
+            id: 'exam-' + Date.now(),
+            name: examData.name,
+            examDate: examData.examDate,
+            daysLeft,
+            chapters: examData.chapters,
+            color: examData.color || '#4f46e5',
+          };
+          setExams((prev) => [...prev, newExam]);
+          setExamPrepExamId(newExam.id);
+          if (generatedTasks && generatedTasks.length > 0) {
+            handleScheduleRevisionTasks(generatedTasks);
+          }
+        }}
       />
 
       <StudentMasteryGuideModal
         isOpen={isGuideModalOpen}
         onClose={() => setIsGuideModalOpen(false)}
         onNavigateToTab={(tab) => setActiveTab(tab)}
-        onOpenExamPrep={(examId) => setExamPrepExamId(examId || exams[0]?.id || 'exam-science')}
+      />
+
+      {/* Global Toast Feedback for deletions & updates */}
+      <ToastNotification
+        message={toastMessage}
+        onClose={() => setToastMessage(null)}
       />
     </div>
   );

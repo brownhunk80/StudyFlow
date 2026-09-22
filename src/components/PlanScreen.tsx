@@ -45,6 +45,7 @@ export interface PlanScreenProps {
   onToggleChapterStatus?: (examId: string, chapterId: string, status?: ChapterStatus) => void;
   onAddChapter?: (examId: string, chapterName: string) => void;
   onUpdateExam?: (updatedExam: Exam) => void;
+  onDeleteChapter?: (examId: string, chapterId: string) => void;
 }
 
 export const PlanScreen: React.FC<PlanScreenProps> = ({
@@ -62,6 +63,7 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
   onScheduleSpacedPlan,
   onToggleChapterStatus,
   onUpdateExam,
+  onDeleteChapter,
 }) => {
   // Navigation view: 'landing' | 'exam_details' | 'study_plan_details'
   const [currentView, setCurrentView] = useState<'landing' | 'exam_details' | 'study_plan_details'>('landing');
@@ -142,6 +144,17 @@ export const PlanScreen: React.FC<PlanScreenProps> = ({
             onUpdateExam(updated);
           }
           setSelectedExamForDetails(updated);
+        }}
+        onDeleteChapter={(examId, chapterId) => {
+          if (onDeleteChapter) {
+            onDeleteChapter(examId, chapterId);
+          }
+          if (activeSelectedExam) {
+            setSelectedExamForDetails({
+              ...activeSelectedExam,
+              chapters: activeSelectedExam.chapters.filter((c) => c.id !== chapterId),
+            });
+          }
         }}
         onScheduleTasks={(newTasks) => {
           if (onScheduleSpacedPlan) {

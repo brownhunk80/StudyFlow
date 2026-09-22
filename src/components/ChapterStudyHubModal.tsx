@@ -32,6 +32,7 @@ import {
   Save,
   Check,
   Zap,
+  Calculator,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -44,6 +45,8 @@ import {
   NoteSpacedReview,
   RecallVerificationResult,
   VerificationInputMode,
+  ChapterTopicItem,
+  TopicStatus,
 } from '../types';
 import {
   fetchChapterNotesFromContent,
@@ -56,8 +59,12 @@ import {
   ChapterTopic,
 } from '../data/chapterTopicsData';
 import { ChapterMaterialsManager } from './ChapterMaterialsManager';
+import { TextbookPracticeEngine } from './TextbookPracticeEngine';
+import { ChapterTopicList } from './ChapterTopicList';
+import { TopicPracticeTestView } from './TopicPracticeTestView';
+import { TopicPickerForRevision, SelectedTopicRevisionBanner } from './TopicPickerForRevision';
 
-export type StudyHubTab = 'learn' | 'recall' | 'notes' | 'flashcards';
+export type StudyHubTab = 'learn' | 'recall' | 'practice' | 'notes' | 'flashcards';
 
 interface ChapterStudyHubModalProps {
   isOpen: boolean;
@@ -177,6 +184,15 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
   const [recallResult, setRecallResult] = useState<RecallVerificationResult | null>(null);
   const [recallError, setRecallError] = useState<string | null>(null);
 
+  // Topic-scoped practice and recall state
+  const effectiveChapterTopics: ChapterTopicItem[] = useMemo(() => {
+    return chapter?.topics || [];
+  }, [chapter?.topics]);
+
+  const [selectedRecallTopicId, setSelectedRecallTopicId] = useState<string>('all');
+  const [showTopicListDrawer, setShowTopicListDrawer] = useState(false);
+  const [recallSubView, setRecallSubView] = useState<'retrieval' | 'practice_test'>('retrieval');
+
   // Speech Recognition hook
   const recognitionRef = useRef<any>(null);
   const recordTimerRef = useRef<any>(null);
@@ -276,7 +292,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [editableNotesText, setEditableNotesText] = useState('');
 
-  // Step 4: Flashcards & RemNote-Style Review
+  // Step 4: Recall Deck & Spaced Review
   const [flashcards, setFlashcards] = useState<
     Array<{
       id: string;
@@ -309,7 +325,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
   // Generate initial flashcards if empty
   useEffect(() => {
     if (flashcards.length === 0) {
-      // Seed default RemNote-style flashcards from curated topics
+      // Seed default StudyFlow-style flashcards from curated topics
       const defaultCards = curatedContent.topics.flatMap((t, idx) => [
         {
           id: `card-${idx}-1`,
@@ -367,6 +383,16 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
         setIsRecording(false);
       }
 
+      const targetTopicObj =
+        effectiveChapterTopics.find((t) => t.id === selectedRecallTopicId) ||
+        effectiveChapterTopics[0];
+
+      const questionText = targetTopicObj?.keyFormula
+        ? `State the formula for "${targetTopicObj.title}" (${targetTopicObj.keyFormula}), explain when it applies, and solve: Calculate the result using the formula.`
+        : targetTopicObj
+          ? `In your own words, explain the core mechanism of "${targetTopicObj.title}" and its key conditions.`
+          : undefined;
+
       // Run AI verification
       const result = await fetchRecallVerification({
         chapterName: chapter.name,
@@ -376,6 +402,12 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
         typedText: recallMode === 'typing' ? recallTypedText : undefined,
         paperImage: recallPaperImage || undefined,
         referenceMaterialsText: curatedContent.topics.map((t) => `${t.title}: ${t.keyInfo.join('. ')}`).join('\n'),
+        topicId: targetTopicObj?.id,
+        topicTitle: targetTopicObj?.title,
+        topicKeyPoints: targetTopicObj?.keyPoints,
+        topicKeyFormula: targetTopicObj?.keyFormula,
+        questionText,
+        topics: effectiveChapterTopics,
       });
 
       setRecallResult(result);
@@ -486,7 +518,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
     setTimeout(() => setNotesUpdatedSuccess(false), 4000);
   };
 
-  // RemNote Spaced Repetition Logic (Step 4)
+  // StudyFlow Spaced Repetition Logic (Step 4)
   // Calculates next review days based on rating and Exam Mode vs Regular Mode
   const getNextIntervalDays = (rating: 'again' | 'hard' | 'good' | 'easy') => {
     if (reviewMode === 'exam') {
@@ -498,7 +530,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
       if (rating === 'easy') return Math.max(3, daysUntilExam - 1);
     }
 
-    // Standard SM-2 / RemNote spaced repetition intervals
+    // Standard SM-2 spaced repetition intervals
     if (rating === 'again') return 1;
     if (rating === 'hard') return 3;
     if (rating === 'good') return 7;
@@ -620,14 +652,15 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
           </div>
         </div>
 
-        {/* Intuitive 4-Step Stepper Bar for 8th–12th Grade Students */}
+        {/* Intuitive 5-Step Stepper Bar for 8th–12th Grade Students */}
         <div className="px-4 py-2.5 bg-slate-50/90 dark:bg-slate-800/50 border-b border-slate-200/80 dark:border-slate-800 shrink-0">
-          <div className="grid grid-cols-4 gap-1 sm:gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 sm:gap-2">
             {[
               { id: 'learn' as StudyHubTab, step: '1', label: 'Learn', subtitle: 'Notes & Videos', icon: BookOpen },
               { id: 'recall' as StudyHubTab, step: '2', label: 'Recall', subtitle: 'Voice / Notes', icon: Mic },
-              { id: 'notes' as StudyHubTab, step: '3', label: 'Check Gaps', subtitle: 'Update Notes', icon: Sparkles },
-              { id: 'flashcards' as StudyHubTab, step: '4', label: 'Flashcards', subtitle: 'RemNote Spaced', icon: Brain },
+              { id: 'practice' as StudyHubTab, step: '3', label: 'Practice', subtitle: 'Solve & Calculate', icon: Calculator },
+              { id: 'notes' as StudyHubTab, step: '4', label: 'Check Gaps', subtitle: 'Update Notes', icon: Sparkles },
+              { id: 'flashcards' as StudyHubTab, step: '5', label: 'Recall Deck', subtitle: 'Spaced Review', icon: Brain },
             ].map((tab) => {
               const isActive = activeTab === tab.id;
               const Icon = tab.icon;
@@ -901,7 +934,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
                         }
                       }}
                       onGenerateFlashcardsFromContent={() => setActiveTab('flashcards')}
-                      onGenerateNotesFromContent={() => setActiveTab('understand')}
+                      onGenerateNotesFromContent={() => setActiveTab('notes')}
                       onOpenFeynmanRecorder={() => setActiveTab('recall')}
                       onOpenRecallVerification={() => setActiveTab('recall')}
                     />
@@ -927,51 +960,183 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
           )}
 
           {/* ========================================================================= */}
-          {/* STEP 2: RECALL (Voice Notes, Upload Notes/Pictures, Quick Blurt)          */}
+          {/* STEP 2: RECALL (Topic-Scoped: Voice, Paper OCR, Quick Blurt, or Solving)   */}
           {/* ========================================================================= */}
           {activeTab === 'recall' && (
             <div className="space-y-6">
-              {/* Encouragement Banner */}
-              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 p-4 rounded-3xl border border-indigo-100 dark:border-indigo-900/50 flex items-start gap-3.5">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                  <Brain className="w-5 h-5" />
+              {effectiveChapterTopics.length === 0 ? (
+                <TopicPickerForRevision
+                  chapter={chapter}
+                  selectedTopicId={null}
+                  onSelectTopic={() => {}}
+                  mode="recall"
+                  actionLabel="Start Active Recall"
+                  onOpenUpload={() => setActiveTab('learn')}
+                />
+              ) : (
+                <>
+                  {/* Selected Topic Revision Banner */}
+                  {(() => {
+                    const activeTopic =
+                      effectiveChapterTopics.find((t) => t.id === selectedRecallTopicId) ||
+                      effectiveChapterTopics[0];
+                    return (
+                      <SelectedTopicRevisionBanner
+                        topic={activeTopic}
+                        chapterName={chapter.name}
+                        onSwitchTopic={() => setShowTopicListDrawer(true)}
+                      />
+                    );
+                  })()}
+
+                  {/* Encouragement Banner */}
+                  <div className="bg-indigo-50/70 dark:bg-indigo-950/40 p-4 rounded-3xl border border-indigo-100 dark:border-indigo-900/50 flex items-start justify-between gap-3.5">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                        <Brain className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>Step 2: Topic-Scoped Active Recall & Revision</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300">
+                            Curriculum-Aligned
+                          </span>
+                        </h3>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
+                          Practice is anchored strictly to your chosen topic in{' '}
+                          <span className="font-bold text-indigo-600 dark:text-indigo-400">{chapter.name}</span>.
+                          For Maths & Science, questions require calculation and problem-solving!
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowTopicListDrawer(!showTopicListDrawer)}
+                      className="px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer flex items-center gap-1.5 shrink-0"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>{showTopicListDrawer ? 'Hide Topics' : 'Manage Topics'}</span>
+                    </button>
+                  </div>
+
+              {/* Collapsible ChapterTopicList Drawer */}
+              {showTopicListDrawer && (
+                <div className="p-4 rounded-3xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <ChapterTopicList
+                    topics={effectiveChapterTopics}
+                    chapterName={chapter.name}
+                    selectedTopicId={selectedRecallTopicId}
+                    onSelectTopic={(id) => setSelectedRecallTopicId(id)}
+                    onStartRevisionTopic={(t) => {
+                      setSelectedRecallTopicId(t.id);
+                      setRecallSubView('practice_test');
+                      setShowTopicListDrawer(false);
+                    }}
+                  />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    Step 2: Active Recall (The Blurting Method)
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
-                    Put away your notes and tell or show what you remember from{' '}
-                    <span className="font-bold text-indigo-600 dark:text-indigo-400">{chapter.name}</span>.
-                    Explaining out loud or writing from memory builds 300% stronger brain connections than just re-reading!
-                  </p>
-                </div>
+              )}
+
+              {/* Sub-view switcher: Memory Blurting vs Topic Practice Test */}
+              <div className="flex items-center gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setRecallSubView('retrieval')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                    recallSubView === 'retrieval'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Mic className="w-4 h-4" />
+                  <span>Active Retrieval (Blurting, Paper, Audio)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRecallSubView('practice_test')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                    recallSubView === 'practice_test'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Calculator className="w-4 h-4" />
+                  <span>Solve Practice Questions (Curriculum-Aligned)</span>
+                </button>
               </div>
 
-              {/* Mode Selection Tabs */}
-              <div className="flex items-center gap-2">
-                {[
-                  { mode: 'speaking' as VerificationInputMode, label: 'Voice Note (Feynman Speech)', icon: Mic },
-                  { mode: 'written_paper' as VerificationInputMode, label: 'Upload Notes / Picture', icon: UploadCloud },
-                  { mode: 'typing' as VerificationInputMode, label: 'Quick Brain Dump (Type)', icon: Edit3 },
-                ].map((m) => {
-                  const Icon = m.icon;
-                  return (
+              {/* VIEW 1: Practice Test (Solve & Calculate, with follow-up remediation) */}
+              {recallSubView === 'practice_test' ? (
+                <TopicPracticeTestView
+                  chapterName={chapter.name}
+                  subject={subject}
+                  topics={effectiveChapterTopics}
+                  selectedTopicId={selectedRecallTopicId}
+                  onSelectTopic={(id) => setSelectedRecallTopicId(id)}
+                  onCompleteScore={(correct, total) => {
+                    if (onUpdateChapterStatus) {
+                      const score = Math.round((correct / total) * 100);
+                      onUpdateChapterStatus(chapter.id, score >= 75 ? 'mastered' : 'need_work', score);
+                    }
+                  }}
+                />
+              ) : (
+                /* VIEW 2: Blurting & Active Retrieval (Topic Anchored) */
+                <div className="space-y-6">
+                  {/* Topic Selector Chips for Retrieval */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    <span className="text-[11px] font-bold text-slate-500 shrink-0">Anchor:</span>
                     <button
-                      key={m.mode}
-                      onClick={() => setRecallMode(m.mode)}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-2xl text-xs font-bold transition cursor-pointer ${
-                        recallMode === m.mode
+                      type="button"
+                      onClick={() => setSelectedRecallTopicId('all')}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                        selectedRecallTopicId === 'all'
                           ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
                       }`}
                     >
-                      <Icon className="w-4 h-4" />
-                      <span>{m.label}</span>
+                      All Topics
                     </button>
-                  );
-                })}
-              </div>
+                    {effectiveChapterTopics.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setSelectedRecallTopicId(t.id)}
+                        className={`px-3 py-1 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                          selectedRecallTopicId === t.id
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                        }`}
+                      >
+                        {t.title}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Mode Selection Tabs */}
+                  <div className="flex items-center gap-2">
+                    {[
+                      { mode: 'speaking' as VerificationInputMode, label: 'Voice Note (Feynman Speech)', icon: Mic },
+                      { mode: 'written_paper' as VerificationInputMode, label: 'Upload Notes / Picture', icon: UploadCloud },
+                      { mode: 'typing' as VerificationInputMode, label: 'Quick Brain Dump (Type)', icon: Edit3 },
+                    ].map((m) => {
+                      const Icon = m.icon;
+                      return (
+                        <button
+                          key={m.mode}
+                          onClick={() => setRecallMode(m.mode)}
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-2xl text-xs font-bold transition cursor-pointer ${
+                            recallMode === m.mode
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          <Icon className="w-4 h-4" />
+                          <span>{m.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
               {/* Mode A: Voice Note */}
               {recallMode === 'speaking' && (
@@ -1096,9 +1261,39 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
               </div>
             </div>
           )}
+                </>
+              )}
+            </div>
+          )}
 
           {/* ========================================================================= */}
-          {/* STEP 3: PREPARE NOTES - CHECK WHAT'S MISSING - UPDATE NOTES               */}
+          {/* STEP 3: TEXTBOOK-ALIGNED PRACTICE & PROBLEM SOLVING                       */}
+          {/* ========================================================================= */}
+          {activeTab === 'practice' && (
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden p-2 sm:p-4">
+              <TextbookPracticeEngine
+                chapterId={chapter.id}
+                chapterName={chapter.name}
+                subject={subject}
+                materials={materials}
+                examName={examName}
+                curriculumContext={{
+                  board: 'Standard Curriculum',
+                  classLevel: 'Grade 10',
+                  textbookName: 'NCERT / Core Textbook',
+                }}
+                onCompleteSession={(res) => {
+                  if (onUpdateChapterStatus) {
+                    const status = res.score / res.total >= 0.8 ? 'mastered' : 'needs_practice';
+                    onUpdateChapterStatus(chapter.id, status, Math.round((res.score / res.total) * 100));
+                  }
+                }}
+              />
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* STEP 4: PREPARE NOTES - CHECK WHAT'S MISSING - UPDATE NOTES               */}
           {/* ========================================================================= */}
           {activeTab === 'notes' && (
             <div className="space-y-6">
@@ -1295,7 +1490,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
                   onClick={() => setActiveTab('flashcards')}
                   className="px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center gap-2 transition cursor-pointer shadow-sm"
                 >
-                  <span>Step 4: Practice RemNote Flashcards</span>
+                  <span>Step 4: Practice Recall Deck</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -1303,7 +1498,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
           )}
 
           {/* ========================================================================= */}
-          {/* STEP 4: AUTOMATED FLASHCARD RECALL (RemNote Inspiration)                  */}
+          {/* STEP 4: AUTOMATED FLASHCARD RECALL (Recall Deck)                          */}
           {/* ========================================================================= */}
           {activeTab === 'flashcards' && (
             <div className="space-y-6">
@@ -1311,7 +1506,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
               <div className="bg-slate-50 dark:bg-slate-800/40 rounded-3xl p-4 border border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                    Spaced Repetition Algorithm (RemNote Style)
+                    Spaced Repetition Algorithm (StudyFlow)
                   </div>
                   <div className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
                     {reviewMode === 'exam'
@@ -1367,7 +1562,7 @@ export const ChapterStudyHubModal: React.FC<ChapterStudyHubModalProps> = ({
                     />
                   </div>
 
-                  {/* RemNote Style Card Box */}
+                  {/* Interactive Card Box */}
                   <div
                     onClick={() => setIsCardFlipped((prev) => !prev)}
                     className="min-h-[260px] bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 rounded-3xl p-6 sm:p-8 flex flex-col justify-between cursor-pointer shadow-lg transition-all"

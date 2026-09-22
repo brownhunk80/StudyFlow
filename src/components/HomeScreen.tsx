@@ -35,6 +35,7 @@ interface HomeScreenProps {
   onOpenExamPrep: (examId?: string) => void;
   onStartRecallSession?: (deckId?: string, subject?: string) => void;
   onNavigateToRecall?: () => void;
+  onNavigateToPlan?: () => void;
   onOpenGuide?: () => void;
   onOpenChapterHub?: (chapter: Chapter, subjectName: string, exam?: Exam) => void;
 }
@@ -49,6 +50,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onStartFocusTask,
   onStartRecallSession,
   onNavigateToRecall,
+  onNavigateToPlan,
 }) => {
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -126,7 +128,96 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         </div>
 
         {/* --------------------------------------------------------------------- */}
-        {/* PRIORITY 1: RECALL                                                    */}
+        {/* PRIORITY 1: TODAY'S STUDY PLAN (Primary Daily Action Center)          */}
+        {/* --------------------------------------------------------------------- */}
+        <div data-tour="home-learn" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                  TODAY&apos;S STUDY PLAN
+                </span>
+                <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                  {currentLearningTask
+                    ? currentLearningTask.title
+                    : tasks.length === 0
+                    ? 'No Study Lessons Scheduled'
+                    : 'All Learning Done!'}
+                </h3>
+              </div>
+            </div>
+
+            {currentLearningTask ? (
+              <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900/60">
+                <Clock className="w-3 h-3 text-indigo-500" />
+                <span>~{currentLearningTask.durationMin || 25} min</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200/80 dark:border-slate-700">
+                <Clock className="w-3 h-3" />
+                <span>0 min</span>
+              </span>
+            )}
+          </div>
+
+          {/* Subject & Chapter Context */}
+          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 text-xs">
+            {currentLearningTask ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap text-slate-600 dark:text-slate-300">
+                  <span className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] text-indigo-600 dark:text-indigo-400">
+                    {currentLearningTask.subject}
+                  </span>
+                  {currentLearningTask.chapter && (
+                    <>
+                      <span className="text-slate-300 dark:text-slate-600">•</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">
+                        {currentLearningTask.chapter}
+                      </span>
+                    </>
+                  )}
+                  {currentLearningTask.activityType && (
+                    <span className="ml-auto px-2 py-0.5 rounded-md bg-white dark:bg-slate-700/80 border border-slate-200/80 dark:border-slate-600 text-[11px] font-semibold text-slate-500 dark:text-slate-300">
+                      {currentLearningTask.activityType}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Study core concepts, verify your understanding, and finalize your chapter notes.
+                </p>
+              </div>
+            ) : (
+              <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                Add an exam in the Plan tab to generate your daily study schedule, or pick a subject folder in the Learn tab.
+              </p>
+            )}
+          </div>
+
+          {/* Action Button: Start Learning vs Go to Plan */}
+          {currentLearningTask ? (
+            <button
+              onClick={() => onStartFocusTask(currentLearningTask)}
+              className="w-full py-3.5 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-black text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+            >
+              <Play className="w-4 h-4 fill-white" />
+              <span>START LESSON</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => onNavigateToPlan?.()}
+              className="w-full py-3.5 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+            >
+              <Calendar className="w-4 h-4" />
+              <span>Go to Plan</span>
+            </button>
+          )}
+        </div>
+
+        {/* --------------------------------------------------------------------- */}
+        {/* PRIORITY 2: RECALL                                                    */}
         {/* --------------------------------------------------------------------- */}
         <div data-tour="home-recall" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
           <div className="flex items-start justify-between gap-3">
@@ -136,7 +227,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </div>
               <div>
                 <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                  1. RECALL
+                  2. RECALL DECK
                 </span>
                 <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
                   {dueCards.length > 0
@@ -202,87 +293,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 : 'PRACTICE AHEAD'}
             </span>
           </button>
-        </div>
-
-        {/* --------------------------------------------------------------------- */}
-        {/* PRIORITY 2: LEARN                                                     */}
-        {/* --------------------------------------------------------------------- */}
-        <div data-tour="home-learn" className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200/90 dark:border-slate-800 shadow-xs space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-100 dark:border-emerald-900/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
-                <BookOpen className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                  2. LEARN
-                </span>
-                <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                  {currentLearningTask
-                    ? currentLearningTask.title
-                    : tasks.length === 0
-                    ? 'No Study Sessions Scheduled'
-                    : 'All Learning Done!'}
-                </h3>
-              </div>
-            </div>
-
-            {currentLearningTask && (
-              <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
-                <Clock className="w-3 h-3 text-slate-500" />
-                <span>{currentLearningTask.durationMin} min</span>
-              </span>
-            )}
-          </div>
-
-          {/* Subject & Chapter Context */}
-          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800 text-xs">
-            {currentLearningTask ? (
-              <div className="flex items-center gap-2 flex-wrap text-slate-600 dark:text-slate-300">
-                <span className="font-bold text-slate-900 dark:text-white">
-                  {currentLearningTask.subject}
-                </span>
-                {currentLearningTask.chapter && (
-                  <>
-                    <span className="text-slate-300 dark:text-slate-600">•</span>
-                    <span className="text-slate-600 dark:text-slate-300">
-                      {currentLearningTask.chapter}
-                    </span>
-                  </>
-                )}
-                {currentLearningTask.activityType && (
-                  <span className="ml-auto px-2 py-0.5 rounded-md bg-white dark:bg-slate-700/80 border border-slate-200/80 dark:border-slate-600 text-[11px] font-semibold text-slate-500 dark:text-slate-300">
-                    {currentLearningTask.activityType}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
-                {tasks.length === 0
-                  ? 'No study sessions scheduled yet. Head to the Plan tab to add an exam and generate your study plan, or start a free focus session.'
-                  : "You've completed all scheduled learning sessions for today. Great job staying on track!"}
-              </p>
-            )}
-          </div>
-
-          {/* Large, Obvious Primary Action */}
-          {currentLearningTask ? (
-            <button
-              onClick={() => onStartFocusTask(currentLearningTask)}
-              className="w-full py-3.5 px-6 rounded-2xl bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-sm flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
-            >
-              <Play className="w-4 h-4 fill-white" />
-              <span>START LEARNING</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => onStartFocusTask()}
-              className="w-full py-3 px-6 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
-            >
-              <Play className="w-3.5 h-3.5" />
-              <span>{tasks.length === 0 ? 'Start Free Study Session' : 'Start Focus Session'}</span>
-            </button>
-          )}
         </div>
       </div>
 

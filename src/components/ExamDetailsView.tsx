@@ -20,6 +20,7 @@ import {
 import { Exam, Chapter, TaskItem, Flashcard, ChapterStatus } from '../types';
 import { calculateExamReadiness } from '../utils/examReadiness';
 import { fetchSpacedRevisionPlan } from '../utils/aiClient';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 export interface ExamDetailsViewProps {
   exam: Exam;
@@ -30,6 +31,7 @@ export interface ExamDetailsViewProps {
   onViewRevision: () => void;
   onToggleChapterStatus?: (examId: string, chapterId: string, newStatus: ChapterStatus) => void;
   onUpdateExam?: (updatedExam: Exam) => void;
+  onDeleteChapter?: (examId: string, chapterId: string) => void;
   onScheduleTasks?: (tasks: Array<Omit<TaskItem, 'id' | 'completed'>>) => void;
   onStartTask?: (task: TaskItem) => void;
 }
@@ -43,6 +45,7 @@ export const ExamDetailsView: React.FC<ExamDetailsViewProps> = ({
   onViewRevision,
   onToggleChapterStatus,
   onUpdateExam,
+  onDeleteChapter,
   onScheduleTasks,
   onStartTask,
 }) => {
@@ -54,6 +57,7 @@ export const ExamDetailsView: React.FC<ExamDetailsViewProps> = ({
   const [editName, setEditName] = useState(exam.name);
   const [editDate, setEditDate] = useState(exam.examDate);
   const [newChapterName, setNewChapterName] = useState('');
+  const [chapterToDelete, setChapterToDelete] = useState<Chapter | null>(null);
 
   // Format date helper: "21 September"
   const formattedDate = (() => {
@@ -501,8 +505,10 @@ export const ExamDetailsView: React.FC<ExamDetailsViewProps> = ({
                     >
                       <span className="truncate pr-2">{c.name}</span>
                       <button
-                        onClick={() => handleRemoveChapter(c.id)}
-                        className="text-slate-400 hover:text-rose-500 p-1 rounded"
+                        type="button"
+                        onClick={() => setChapterToDelete(c)}
+                        className="text-slate-400 hover:text-rose-500 p-1 rounded transition cursor-pointer"
+                        title="Delete chapter"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -553,6 +559,24 @@ export const ExamDetailsView: React.FC<ExamDetailsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation modal for chapter deletion */}
+      <DeleteConfirmModal
+        isOpen={Boolean(chapterToDelete)}
+        type="chapter"
+        itemName={chapterToDelete?.name || ''}
+        onCancel={() => setChapterToDelete(null)}
+        onConfirm={() => {
+          if (chapterToDelete) {
+            if (onDeleteChapter) {
+              onDeleteChapter(exam.id, chapterToDelete.id);
+            } else {
+              handleRemoveChapter(chapterToDelete.id);
+            }
+            setChapterToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };

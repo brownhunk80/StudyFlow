@@ -33,6 +33,7 @@ import {
 import { ChapterStudyHubModal } from './ChapterStudyHubModal';
 import { SpacedRevisionPlanModal } from './SpacedRevisionPlanModal';
 import { calculateExamReadiness, formatChapterStatusLabel, getChapterStatusColor } from '../utils/examReadiness';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface ExamPrepModalProps {
   isOpen: boolean;
@@ -90,6 +91,7 @@ export const ExamPrepModal: React.FC<ExamPrepModalProps> = ({
   const [activeSegment, setActiveSegment] = useState<'chapters' | 'study_plan'>('chapters');
   const [newChapterName, setNewChapterName] = useState('');
   const [isAddingChapter, setIsAddingChapter] = useState(false);
+  const [chapterToDelete, setChapterToDelete] = useState<Chapter | null>(null);
   const [selectedChapterForHub, setSelectedChapterForHub] = useState<{
     chapter: Chapter;
     initialTab?: 'materials' | 'notes' | 'flashcards' | 'verify' | 'test';
@@ -435,8 +437,10 @@ export const ExamPrepModal: React.FC<ExamPrepModalProps> = ({
                             </button>
                           )}
                           <button
-                            onClick={() => onDeleteChapter(currentExam.id, chap.id)}
-                            className="p-1.5 text-slate-300 hover:text-rose-500 dark:text-slate-600 transition"
+                            type="button"
+                            onClick={() => setChapterToDelete(chap)}
+                            className="p-1.5 text-slate-300 hover:text-rose-500 dark:text-slate-600 transition cursor-pointer"
+                            title="Delete chapter"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -624,7 +628,6 @@ export const ExamPrepModal: React.FC<ExamPrepModalProps> = ({
             }
           }}
           onAddFlashcards={onAddFlashcards}
-          onScheduleRevisionTasks={onScheduleRevisionTasks}
           onUpdateChapterMaterials={(chapId, materials) => {
             if (onUpdateChapterMaterials) {
               onUpdateChapterMaterials(currentExam.id, chapId, materials);
@@ -659,6 +662,20 @@ export const ExamPrepModal: React.FC<ExamPrepModalProps> = ({
           }}
         />
       )}
+
+      {/* Confirmation modal for chapter deletion */}
+      <DeleteConfirmModal
+        isOpen={Boolean(chapterToDelete)}
+        type="chapter"
+        itemName={chapterToDelete?.name || ''}
+        onCancel={() => setChapterToDelete(null)}
+        onConfirm={() => {
+          if (chapterToDelete) {
+            onDeleteChapter(currentExam.id, chapterToDelete.id);
+            setChapterToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };
