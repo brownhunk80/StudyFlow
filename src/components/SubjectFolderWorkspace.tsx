@@ -53,7 +53,9 @@ import {
   KnowledgeGapItem,
   ChapterTopicItem,
   TopicStatus,
+  ChapterCreationData,
 } from '../types';
+import { CreateChapterModal } from './CreateChapterModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import {
   getChapterCuratedContent,
@@ -88,6 +90,7 @@ export type FolderStep =
   | 'update_notes';
 
 interface SubjectFolderWorkspaceProps {
+  subjectId?: string;
   subjectName: string;
   subjectColor?: string;
   exam?: Exam;
@@ -105,16 +108,18 @@ interface SubjectFolderWorkspaceProps {
   onAddFlashcards?: (cards: Array<Omit<Flashcard, 'id' | 'interval' | 'repetitions' | 'easeFactor' | 'status' | 'box'>>) => void;
   onUpdateChapterMaterials?: (chapterId: string, materials: ChapterMaterial[]) => void;
   onUpdateExamDate?: (examId: string, newDate: string) => void;
-  onAddChapter?: (examId: string, chapterName: string) => void;
+  onAddChapter?: (examId: string, chapterData: string | ChapterCreationData) => void;
   onRateCard?: (cardId: string, rating: RecallRating) => void;
   onStartFocusChapter?: (chapter: Chapter, examName: string) => void;
   onNavigateToTab?: (tab: 'home' | 'focus' | 'recall' | 'plan' | 'progress' | 'profile') => void;
   onScheduleRevisionTasks?: (tasks: Array<Omit<TaskItem, 'id' | 'completed'>>) => void;
   onDeleteChapter?: (chapterId: string, examId?: string) => void;
   onDeleteSubject?: (subjectId: string) => void;
+  onAddSubject?: () => void;
 }
 
 export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
+  subjectId,
   subjectName,
   subjectColor = '#4f46e5',
   exam,
@@ -134,6 +139,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
   onScheduleRevisionTasks,
   onDeleteChapter,
   onDeleteSubject,
+  onAddSubject,
 }) => {
   // Current active chapter
   const [selectedChapterId, setSelectedChapterId] = useState<string>(
@@ -156,9 +162,8 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
   // Current Step in the 6-step flow
   const [activeStep, setActiveStep] = useState<FolderStep>('learn');
 
-  // New chapter modal / inline input
-  const [isAddingChapter, setIsAddingChapter] = useState(false);
-  const [newChapterName, setNewChapterName] = useState('');
+  // New chapter modal
+  const [isCreateChapterModalOpen, setIsCreateChapterModalOpen] = useState(false);
 
   // Curated Content & Topics
   const curatedContent: ChapterCuratedContent = useMemo(() => {
@@ -892,18 +897,19 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
   };
 
   const examReadiness = useMemo(() => {
-    return exam ? calculateExamReadiness(exam) : null;
-  }, [exam]);
+    return exam ? calculateExamReadiness({ ...exam, chapters }) : null;
+  }, [exam, chapters]);
 
   const chapterReadinessScore = useMemo(() => {
+    if (chapters.length === 0) return 0;
     if (activeChapter.masteryPercentage !== undefined) {
       return activeChapter.masteryPercentage;
     }
     if (examReadiness) {
       return examReadiness.overallScore;
     }
-    return 68;
-  }, [activeChapter, examReadiness]);
+    return 0;
+  }, [activeChapter, examReadiness, chapters.length]);
 
   const recommendedNextAction = useMemo(() => {
     if (activeChapter.status === 'mastered') {
@@ -1017,9 +1023,21 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* Exam Countdown Badge */}
-          {exam && (
-            <div className="flex items-center gap-2">
+          {/* Exam Countdown Badge & Actions */}
+          <div className="flex items-center gap-2">
+            {onAddSubject && (
+              <button
+                type="button"
+                onClick={onAddSubject}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-indigo-600 hover:border-indigo-300 dark:hover:border-indigo-800 transition cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                title="Create another subject folder"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">New Subject</span>
+              </button>
+            )}
+
+            {exam && (
               <div className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5 text-xs font-bold shadow-2xs">
                 <Calendar className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                 <span>
@@ -1028,8 +1046,20 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                     : `${exam.daysLeft}d left to Exam (${exam.examDate})`}
                 </span>
               </div>
-            </div>
-          )}
+            )}
+
+            {onDeleteSubject && (
+              <button
+                type="button"
+                onClick={() => setIsConfirmingDeleteSubject(true)}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 dark:hover:bg-rose-950/40 dark:hover:border-rose-900 transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                title={`Delete ${subjectName} Folder`}
+              >
+                <Trash2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-600" />
+                <span className="hidden xs:inline">Delete Folder</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Chapter Selector Strip */}
@@ -1076,51 +1106,13 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
 
           {onAddChapter && exam && (
             <div className="shrink-0">
-              {isAddingChapter ? (
-                <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={newChapterName}
-                    onChange={(e) => setNewChapterName(e.target.value)}
-                    placeholder="Chapter name..."
-                    className="px-2.5 py-1 text-xs rounded-lg border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-none w-36"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newChapterName.trim()) {
-                        onAddChapter(exam.id, newChapterName.trim());
-                        setNewChapterName('');
-                        setIsAddingChapter(false);
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={() => {
-                      if (newChapterName.trim()) {
-                        onAddChapter(exam.id, newChapterName.trim());
-                        setNewChapterName('');
-                      }
-                      setIsAddingChapter(false);
-                    }}
-                    className="p-1 rounded-lg bg-indigo-600 text-white text-xs font-bold"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setIsAddingChapter(false)}
-                    className="p-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setIsAddingChapter(true)}
-                  className="px-2.5 py-1.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-400 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>Add Chapter</span>
-                </button>
-              )}
+              <button
+                onClick={() => setIsCreateChapterModalOpen(true)}
+                className="px-2.5 py-1.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-400 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Add Chapter</span>
+              </button>
             </div>
           )}
         </div>
@@ -1135,7 +1127,13 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 </span>
                 <span className="text-slate-300 dark:text-slate-700">•</span>
                 <span className="font-bold text-slate-700 dark:text-slate-300">
-                  Exam Readiness: <strong className="text-indigo-600 dark:text-indigo-400">{chapterReadinessScore}%</strong>
+                  Exam Readiness:{' '}
+                  <strong className="text-indigo-600 dark:text-indigo-400">
+                    {chapters.length === 0 ? '—' : `${chapterReadinessScore}%`}
+                  </strong>
+                  {chapters.length === 0 && (
+                    <span className="text-[10px] text-slate-400 font-medium ml-1">(No Data)</span>
+                  )}
                 </span>
                 <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${getChapterStatusColor(activeChapter.status)}`}>
                   {formatChapterStatusLabel(activeChapter.status)}
@@ -3044,6 +3042,35 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
               setSelectedChapterId(remaining[0].id);
             }
             setChapterToDelete(null);
+          }
+        }}
+      />
+
+      {/* Confirmation modal for subject folder deletion */}
+      <DeleteConfirmModal
+        isOpen={isConfirmingDeleteSubject}
+        type="subject"
+        itemName={subjectName}
+        customTitle={`Delete ${subjectName}?`}
+        customMessage={`Delete ${subjectName}? This will permanently remove this subject and all its chapters, checkpoints, and review history.`}
+        onCancel={() => setIsConfirmingDeleteSubject(false)}
+        onConfirm={() => {
+          if (onDeleteSubject) {
+            onDeleteSubject(subjectId || exam?.id || subjectName);
+          }
+          setIsConfirmingDeleteSubject(false);
+          onBack();
+        }}
+      />
+
+      {/* Create New Chapter Modal (Document-First Chapter Setup) */}
+      <CreateChapterModal
+        isOpen={isCreateChapterModalOpen}
+        subjectName={subjectName}
+        onClose={() => setIsCreateChapterModalOpen(false)}
+        onCreateChapter={(data) => {
+          if (exam && onAddChapter) {
+            onAddChapter(exam.id, data);
           }
         }}
       />

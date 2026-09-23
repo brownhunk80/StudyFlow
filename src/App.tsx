@@ -40,6 +40,8 @@ import {
   Flashcard,
   FlashcardDeck,
   RecallRating,
+  ChapterCreationData,
+  Section,
 } from './types';
 import {
   initialUserProfile,
@@ -53,7 +55,7 @@ import {
 import { calculateNextReview, isCardDue } from './utils/spacedRepetition';
 import { fetchExtractChapterTopics } from './utils/aiClient';
 
-const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v4';
+const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v5_dynamic_milestones';
 if (typeof window !== 'undefined') {
   try {
     const storedVersion = localStorage.getItem('studyflow_version');
@@ -488,15 +490,137 @@ export default function App() {
 
   // Handler: Add / Delete Subject
   const handleAddSubject = (newSub: Omit<SubjectItem, 'id'>) => {
+    const subId = 'sub-' + Date.now();
     const created: SubjectItem = {
       ...newSub,
-      id: 'sub-' + Date.now(),
+      id: subId,
     };
     setSubjects((prev) => [...prev, created]);
+
+    // Also automatically create/link a corresponding Exam entry so the subject folder
+    // has full chapter-level functionality, dynamic readiness tracking, and flashcards support
+    const targetDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const newExam: Exam = {
+      id: 'exam-' + Date.now(),
+      name: newSub.name,
+      examDate: targetDate,
+      daysLeft: 30,
+      chapters: [],
+      color: newSub.color || '#4f46e5',
+    };
+    setExams((prev) => [...prev, newExam]);
+    setToastMessage(`Subject "${newSub.name}" added successfully.`);
   };
 
   const handleDeleteSubject = (subjectId: string) => {
-    setSubjects((prev) => prev.filter((s) => s.id !== subjectId));
+    // 1. Identify the subject to delete
+    const targetSubject = subjects.find(
+      (s) => s.id === subjectId || s.name.toLowerCase() === subjectId.toLowerCase()
+    );
+    const targetSubjectName = targetSubject ? targetSubject.name : subjectId;
+    const normSubjName = targetSubjectName.toLowerCase().trim();
+
+    // 2. Identify all associated exams and chapter IDs
+    const matchedExams = exams.filter(
+      (e) =>
+        e.id === subjectId ||
+        e.name.toLowerCase().trim() === normSubjName ||
+        (e as any).subjectId === subjectId
+    );
+    const matchedExamIds = new Set(matchedExams.map((e) => e.id));
+    const allAssociatedChapterIds: string[] = [];
+    const allAssociatedChapterNames: string[] = [];
+
+    matchedExams.forEach((e) => {
+      e.chapters.forEach((c) => {
+        allAssociatedChapterIds.push(c.id);
+        allAssociatedChapterNames.push(c.name.toLowerCase().trim());
+      });
+    });
+
+    // 3. Remove subject from subjects
+    setSubjects((prev) =>
+      prev.filter(
+        (s) => s.id !== subjectId && s.name.toLowerCase().trim() !== normSubjName
+      )
+    );
+
+    // 4. Remove associated exams
+    setExams((prev) =>
+      prev.filter(
+        (e) =>
+          !matchedExamIds.has(e.id) &&
+          e.id !== subjectId &&
+          e.name.toLowerCase().trim() !== normSubjName
+      )
+    );
+
+    // 5. Cascading deletion of tasks
+    setTasks((prev) =>
+      prev.filter((t) => {
+        if (t.subject && t.subject.toLowerCase().trim() === normSubjName) return false;
+        if ((t as any).subjectId && (t as any).subjectId === subjectId) return false;
+        if (t.examId && matchedExamIds.has(t.examId)) return false;
+        if (t.chapterId && allAssociatedChapterIds.includes(t.chapterId)) return false;
+        if (t.chapter && allAssociatedChapterNames.includes(t.chapter.toLowerCase().trim())) return false;
+        return true;
+      })
+    );
+
+    // 6. Cascading deletion of flashcards & decks
+    setFlashcards((prev) =>
+      prev.filter((c) => {
+        if (c.subject && c.subject.toLowerCase().trim() === normSubjName) return false;
+        if ((c as any).subjectId && (c as any).subjectId === subjectId) return false;
+        if ((c as any).chapterId && allAssociatedChapterIds.includes((c as any).chapterId)) return false;
+        if (c.chapter && allAssociatedChapterNames.includes(c.chapter.toLowerCase().trim())) return false;
+        return true;
+      })
+    );
+
+    setDecks((prev) =>
+      prev.filter((d) => {
+        if (d.subject && d.subject.toLowerCase().trim() === normSubjName) return false;
+        if (d.id === subjectId) return false;
+        return true;
+      })
+    );
+
+    // 7. Cascading cleanup of localStorage keys (child section progress, quiz attempts, checkpoint answers, review logs)
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const lowerKey = key.toLowerCase();
+        if (
+          key.includes(subjectId) ||
+          lowerKey.includes(normSubjName) ||
+          allAssociatedChapterIds.some((cid) => key.includes(cid)) ||
+          allAssociatedChapterNames.some((cname) => cname.length > 3 && lowerKey.includes(cname))
+        ) {
+          if (
+            key !== 'studyflow_version' &&
+            key !== 'studyflow_theme' &&
+            key !== 'studyflow_auth' &&
+            key !== 'studyflow_user'
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (err) {
+      console.warn('Error clearing localStorage for subject:', err);
+    }
+
+    // 8. Reset active views and redirect to "All Subjects" list
+    setActiveFolderSubject(null);
+    if (examPrepExamId && (matchedExamIds.has(examPrepExamId) || examPrepExamId === subjectId)) {
+      setExamPrepExamId(null);
+    }
+
+    setToastMessage(`Subject "${targetSubjectName}" and all associated data deleted.`);
   };
 
   // Handler: Exam Management
@@ -527,44 +651,164 @@ export default function App() {
     );
   };
 
-  // Handler: Exam Chapters
-  const handleAddChapter = (examId: string, chapterName: string) => {
+  // Handler: Exam Chapters (Document-First Chapter Setup)
+  const handleAddChapter = (
+    examIdOrSubject: string,
+    chapterData: string | ChapterCreationData
+  ) => {
+    let targetExam = exams.find(
+      (e) =>
+        e.id === examIdOrSubject ||
+        e.name.toLowerCase() === examIdOrSubject.toLowerCase() ||
+        (e as any).subjectId === examIdOrSubject
+    );
+
+    const chapterName: string = typeof chapterData === 'string' ? chapterData : chapterData.name;
+    const documentName = typeof chapterData === 'object' ? chapterData.documentName : undefined;
+    const documentUrl = typeof chapterData === 'object' ? chapterData.documentUrl : undefined;
+    const rawText = typeof chapterData === 'object' ? chapterData.rawText : undefined;
+    const pageCount = typeof chapterData === 'object' ? chapterData.pageCount : undefined;
+    const sourceType = typeof chapterData === 'object' ? chapterData.sourceType : undefined;
+
     const newChapId = 'chap-' + Date.now();
     const newChap: Chapter = {
       id: newChapId,
       name: chapterName,
       status: 'not_started' as ChapterStatus,
       topics: [],
+      sections: [],
+      milestones: [],
+      documentName,
+      documentUrl,
+      rawText,
+      pageCount,
+      sourceType,
+      materials: documentName
+        ? [
+            {
+              id: `mat-${newChapId}`,
+              type: sourceType === 'pasted_text' ? ('pasted_text' as const) : ('pdf' as const),
+              title: documentName,
+              content: rawText,
+              fileName: documentName,
+              fileData: documentUrl,
+              uploadedAt: new Date().toISOString(),
+            },
+          ]
+        : [],
     };
-    setExams((prev) =>
-      prev.map((e) => (e.id === examId ? { ...e, chapters: [...e.chapters, newChap] } : e))
-    );
 
-    // Auto-extract meaningful topics when a chapter is created
-    const targetExam = exams.find((e) => e.id === examId);
-    fetchExtractChapterTopics(
-      chapterName,
-      (targetExam as any)?.subject || targetExam?.name || 'General',
-      [],
-      targetExam?.name
-    )
-      .then((res) => {
-        if (res && Array.isArray(res.topics) && res.topics.length > 0) {
-          setExams((prev) =>
-            prev.map((e) =>
-              e.id === examId
-                ? {
-                    ...e,
-                    chapters: e.chapters.map((c) =>
-                      c.id === newChapId ? { ...c, topics: res.topics } : c
-                    ),
-                  }
-                : e
-            )
-          );
+    let activeExamId = targetExam?.id;
+
+    if (!targetExam) {
+      // Find subject if exam doesn't exist yet and create exam on the fly!
+      const targetSubj = subjects.find(
+        (s) => s.id === examIdOrSubject || s.name.toLowerCase() === examIdOrSubject.toLowerCase()
+      );
+      const newExamId = 'exam-' + Date.now();
+      activeExamId = newExamId;
+      const newExam: Exam = {
+        id: newExamId,
+        name: targetSubj ? targetSubj.name : examIdOrSubject,
+        examDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        daysLeft: 30,
+        chapters: [newChap],
+        color: targetSubj?.color || '#4f46e5',
+      };
+      targetExam = newExam;
+      setExams((prev) => {
+        const next = [...prev, newExam];
+        try {
+          localStorage.setItem('studyflow_exams', JSON.stringify(next));
+        } catch (err) {
+          console.warn('Failed to save exams', err);
         }
-      })
-      .catch((err) => console.warn('Auto topic extraction on chapter creation:', err));
+        return next;
+      });
+    } else {
+      setExams((prev) => {
+        const next = prev.map((e) => (e.id === activeExamId ? { ...e, chapters: [...e.chapters, newChap] } : e));
+        try {
+          localStorage.setItem('studyflow_exams', JSON.stringify(next));
+        } catch (err) {
+          console.warn('Failed to save exams', err);
+        }
+        return next;
+      });
+    }
+  };
+
+  const handleUpdateChapterSections = (
+    chapterId: string,
+    sections: Section[],
+    examId?: string
+  ) => {
+    setExams((prev) => {
+      const next = prev.map((e) =>
+        !examId || e.id === examId || e.chapters.some((c) => c.id === chapterId)
+          ? {
+              ...e,
+              chapters: e.chapters.map((c) =>
+                c.id === chapterId ? { ...c, sections, milestones: sections } : c
+              ),
+            }
+          : e
+      );
+      try {
+        localStorage.setItem('studyflow_exams', JSON.stringify(next));
+      } catch (err) {
+        console.warn('Failed to save exams', err);
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateChapterDocument = (
+    chapterId: string,
+    docData: Partial<ChapterCreationData>,
+    examId?: string
+  ) => {
+    setExams((prev) => {
+      const next = prev.map((e) =>
+        !examId || e.id === examId || e.chapters.some((c) => c.id === chapterId)
+          ? {
+              ...e,
+              chapters: e.chapters.map((c) => {
+                if (c.id !== chapterId) return c;
+                const updatedMaterials = docData.documentName
+                  ? [
+                      ...(c.materials || []).filter((m) => m.title !== docData.documentName),
+                      {
+                        id: `mat-${Date.now()}`,
+                        type: docData.sourceType === 'pasted_text' ? ('pasted_text' as const) : ('pdf' as const),
+                        title: docData.documentName,
+                        content: docData.rawText,
+                        fileName: docData.documentName,
+                        fileData: docData.documentUrl,
+                        uploadedAt: new Date().toISOString(),
+                      },
+                    ]
+                  : c.materials;
+
+                return {
+                  ...c,
+                  ...docData,
+                  materials: updatedMaterials,
+                  ...(docData.milestones !== undefined
+                    ? { milestones: docData.milestones, sections: docData.milestones }
+                    : {}),
+                };
+              }),
+            }
+          : e
+      );
+      try {
+        localStorage.setItem('studyflow_exams', JSON.stringify(next));
+      } catch (err) {
+        console.warn('Failed to save exams', err);
+      }
+      return next;
+    });
   };
 
   const handleToggleChapterStatus = (examId: string, chapterId: string, status: ChapterStatus) => {
@@ -640,7 +884,33 @@ export default function App() {
       })
     );
 
-    // 5. If activeFolderSubject was open with this chapter / exam, update it
+    // 5. Clean up child section progress, quiz attempts, checkpoint answers, and review logs from localStorage
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const lowerKey = key.toLowerCase();
+        if (
+          key.includes(chapterId) ||
+          (normChapName && normChapName.length > 3 && lowerKey.includes(normChapName))
+        ) {
+          if (
+            key !== 'studyflow_version' &&
+            key !== 'studyflow_theme' &&
+            key !== 'studyflow_auth' &&
+            key !== 'studyflow_user'
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (err) {
+      console.warn('Error clearing localStorage for chapter:', err);
+    }
+
+    // 6. If activeFolderSubject was open with this chapter / exam, update it
     setActiveFolderSubject((prev) => {
       if (!prev) return null;
       if (prev.exam) {
@@ -655,7 +925,7 @@ export default function App() {
       return prev;
     });
 
-    // 6. Show toast notification
+    // 7. Show toast notification
     setToastMessage(`Chapter "${targetChapterName || 'Chapter'}" deleted successfully.`);
   };
 
@@ -967,6 +1237,7 @@ export default function App() {
         {activeTab === 'home' &&
           (activeFolderSubject ? (
             <SubjectFolderWorkspace
+              subjectId={activeFolderSubject.subject.id}
               subjectName={activeFolderSubject.subject.name}
               subjectColor={activeFolderSubject.subject.color}
               exam={
@@ -1096,7 +1367,7 @@ export default function App() {
                 }
               }}
               onUpdateExamDate={(examId, newDate) => handleUpdateExamDate(examId, newDate)}
-              onAddChapter={(examId, chapterName) => handleAddChapter(examId, chapterName)}
+              onAddChapter={(examId, chapterData) => handleAddChapter(examId, chapterData)}
               onRateCard={handleRateCard}
               onStartFocusChapter={(chapter, examName) => {
                 setActiveFolderSubject(null);
@@ -1108,6 +1379,11 @@ export default function App() {
               }}
               onScheduleRevisionTasks={handleScheduleRevisionTasks}
               onDeleteChapter={(chapId, exId) => handleDeleteChapter(exId || '', chapId)}
+              onDeleteSubject={handleDeleteSubject}
+              onAddSubject={() => {
+                setSubjectModalType('study');
+                setIsSubjectModalOpen(true);
+              }}
             />
           ) : (
             <HomeScreen
@@ -1270,9 +1546,16 @@ export default function App() {
               }));
               setFlashcards((prev) => [...formatted, ...prev]);
             }}
-            onAddChapter={(examId, chapterName) => handleAddChapter(examId, chapterName)}
+            onAddChapter={(examId, chapterData) => handleAddChapter(examId, chapterData)}
+            onUpdateChapterSections={handleUpdateChapterSections}
+            onUpdateChapterDocument={handleUpdateChapterDocument}
             onDeleteChapter={(chapId, exId) => handleDeleteChapter(exId || '', chapId)}
             onDeleteTopic={handleDeleteTopic}
+            onDeleteSubject={handleDeleteSubject}
+            onAddSubject={() => {
+              setSubjectModalType('study');
+              setIsSubjectModalOpen(true);
+            }}
           />
         )}
 

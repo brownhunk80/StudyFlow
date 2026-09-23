@@ -309,6 +309,96 @@ export interface Chapter {
   handwrittenNotes?: HandwrittenNoteAttachment[];
   topics?: ChapterTopicItem[]; // The granular topic level inside every chapter
   sections?: Section[];
+  milestones?: Section[]; // Dynamic curriculum learning milestones bound strictly by chapter ID
+
+  // Document Upload & Attachment Fields
+  documentUrl?: string;
+  documentName?: string;
+  rawText?: string;
+  pageCount?: number;
+  sourceType?: 'pdf' | 'docx' | 'txt' | 'epub' | 'pasted_text';
+}
+
+export interface ChapterCreationData {
+  name: string;
+  documentName?: string;
+  documentUrl?: string;
+  rawText?: string;
+  pageCount?: number;
+  sourceType?: 'pdf' | 'docx' | 'txt' | 'epub' | 'pasted_text';
+  milestones?: Section[];
+}
+
+export interface DocumentMilestoneItem {
+  milestoneNumber: number;
+  title: string;
+  sourcePageRange: string;
+  sourceHeading: string;
+  summary: {
+    compact: string;
+    detailed: string;
+  };
+  coreTopics: string[];
+  checkLearning: Array<{
+    question: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+    misdirectionBreakdown?: string;
+    correctAnswer?: string;
+  }>;
+  recallDeck: Array<{
+    front: string;
+    back: string;
+    sourceExcerpt?: string;
+    explanation?: string;
+  }>;
+  // Compatibility aliases
+  milestoneTitle?: string;
+  recallCards?: Array<{
+    front: string;
+    back: string;
+    explanation?: string;
+  }>;
+  checkLearningQuestions?: Array<{
+    question: string;
+    options: string[];
+    correctAnswer?: string;
+    correctIndex: number;
+    explanation: string;
+    misdirectionBreakdown?: string;
+  }>;
+}
+
+export interface DocumentCurriculumExtraction {
+  chapterTitle: string;
+  totalSectionsDetected: number;
+  milestones: DocumentMilestoneItem[];
+  source?: 'gemini' | 'structured_fallback';
+  generatedAt?: string;
+  documentName?: string;
+}
+
+export interface ExtractedMilestone {
+  milestoneTitle: string;
+  coreTopics: string[];
+  summary: {
+    compact: string;
+    detailed: string;
+  };
+  recallCards: Array<{
+    front: string;
+    back: string;
+    explanation?: string;
+  }>;
+  checkLearningQuestions: Array<{
+    question: string;
+    options: string[];
+    correctAnswer: string;
+    correctIndex: number;
+    explanation: string;
+    misdirectionBreakdown?: string;
+  }>;
 }
 
 export interface HandwrittenDiagramInfo {

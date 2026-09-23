@@ -40,6 +40,7 @@ interface RoadmapMilestoneCardProps {
   index: number;
   totalSections: number;
   isExpanded: boolean;
+  isGeneratingDetail?: boolean;
   onToggleExpand: () => void;
   // Card Actions
   onOpenFlashcards: (section: Section, mode: 'practice' | 'edit') => void;
@@ -59,6 +60,7 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
   index,
   totalSections,
   isExpanded,
+  isGeneratingDetail,
   onToggleExpand,
   onOpenFlashcards,
   onOpenQuiz,
@@ -279,6 +281,12 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
         {/* ================================================================= */}
         {isExpanded && (
           <div className="border-t border-slate-100 dark:border-slate-800/80 p-5 sm:p-6 space-y-5 bg-slate-50/50 dark:bg-slate-900/40 animate-in fade-in-50 duration-200">
+            {isGeneratingDetail && (
+              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/80 flex items-center gap-2 text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                <Sparkles className="w-4 h-4 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <span>Generating custom practice questions & spaced recall cards for this milestone...</span>
+              </div>
+            )}
             {/* ------------------------------------------------------------- */}
             {/* a) TOP CARD: "Check Learning" (Replaces Quiz) */}
             {/* Full-width card with progress counter, difficulty badge, button */}

@@ -128,7 +128,7 @@ Return pure JSON matching this exact schema:
         }
 
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-3.8-flash',
           contents: contentsParts,
           config: {
             responseMimeType: 'application/json',
@@ -147,7 +147,8 @@ Return pure JSON matching this exact schema:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini multimodal evaluation error:', aiErr?.message || aiErr);
+        const status = aiErr?.status || aiErr?.code || (aiErr?.message?.includes('503') ? 503 : 'unavailable');
+        console.warn(`[EvaluateAnswerRoute] Gemini evaluation unavailable (status ${status}), using algorithmic fallback`);
       }
     }
 

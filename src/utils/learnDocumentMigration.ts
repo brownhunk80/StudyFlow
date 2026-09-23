@@ -155,19 +155,66 @@ export function migrateChapterToLearnDocument(
   };
 
   const docId = `doc-${chapter.id}`;
-  const rawTopics = chapter.topics && chapter.topics.length > 0
-    ? chapter.topics
-    : [
-        {
-          id: `topic-${chapter.id}-core`,
-          title: chapter.name,
-          summary: chapter.notes || chapter.aiNotes?.summary || `Core mechanisms of ${chapter.name}`,
-          status: 'learning' as const,
-          keyPoints: chapter.knowledgeGaps?.map((g) => g.concept) || [chapter.name],
-        },
-      ];
 
-  // Map each topic to a Section
+  // If chapter already has processed milestones or sections, return them directly
+  const existingMilestones = (chapter.milestones && chapter.milestones.length > 0)
+    ? chapter.milestones
+    : (chapter.sections && chapter.sections.length > 0)
+      ? chapter.sections
+      : null;
+
+  if (existingMilestones && existingMilestones.length > 0) {
+    const overallProgress = Math.round(
+      existingMilestones.reduce((acc, s) => acc + s.completionRate, 0) / existingMilestones.length
+    );
+    return {
+      document: {
+        id: docId,
+        title: chapter.name,
+        subjectId: chapter.subjectId,
+        subjectName: chapter.subject,
+        examId: chapter.examId,
+        status:
+          overallProgress >= 90
+            ? 'MASTERED'
+            : overallProgress >= 50
+              ? 'IN_PROGRESS'
+              : overallProgress > 0
+                ? 'REVISING'
+                : 'NOT_STARTED',
+        overallProgress,
+        legacyChapterId: chapter.id,
+        sections: existingMilestones,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      stats: {
+        ...stats,
+        sectionsCreated: existingMilestones.length,
+      },
+    };
+  }
+
+  // Strict Guardrail: If no milestones exist, return empty sections array (no mock milestones or synthetic fallbacks)
+  return {
+    document: {
+      id: docId,
+      title: chapter.name,
+      subjectId: chapter.subjectId,
+      subjectName: chapter.subject,
+      examId: chapter.examId,
+      status: 'NOT_STARTED',
+      overallProgress: 0,
+      legacyChapterId: chapter.id,
+      sections: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    stats,
+  };
+
+
+  const rawTopics = chapter.topics || [];
   const sections: Section[] = rawTopics.map((topic, index) => {
     stats.sectionsCreated++;
     const sectionId = `sec-${chapter.id}-${topic.id || index + 1}`;

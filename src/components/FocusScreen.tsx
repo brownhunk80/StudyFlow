@@ -53,7 +53,10 @@ import {
   ChapterStatus,
   RecallVerificationResult,
   VerificationInputMode,
+  ChapterCreationData,
+  Section,
 } from '../types';
+import { CreateChapterModal } from './CreateChapterModal';
 import {
   getChapterCuratedContent,
   ChapterCuratedContent,
@@ -119,11 +122,14 @@ export interface FocusScreenProps {
   onAddFlashcards?: (
     cards: Array<Omit<Flashcard, 'id' | 'interval' | 'repetitions' | 'easeFactor' | 'status' | 'box'>>
   ) => void;
-  onAddChapter?: (examId: string, chapterName: string) => void;
+  onAddChapter?: (examId: string, chapterData: string | ChapterCreationData) => void;
+  onUpdateChapterSections?: (chapterId: string, sections: Section[], examId?: string) => void;
+  onUpdateChapterDocument?: (chapterId: string, docData: Partial<ChapterCreationData>, examId?: string) => void;
   onScheduleRevisionTasks?: (tasks: Array<Omit<TaskItem, 'id' | 'completed'>>) => void;
   onDeleteChapter?: (chapterId: string, examId?: string) => void;
   onDeleteTopic?: (topicId: string, chapterId?: string, examId?: string) => void;
   onDeleteSubject?: (subjectId: string) => void;
+  onAddSubject?: () => void;
 }
 
 export const FocusScreen: React.FC<FocusScreenProps> = ({
@@ -144,12 +150,15 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   onUpdateChapterStatus,
   onUpdateChapterMaterials,
   onUpdateChapterTopics,
+  onUpdateChapterSections,
+  onUpdateChapterDocument,
   onAddFlashcards,
   onAddChapter,
   onScheduleRevisionTasks,
   onDeleteChapter,
   onDeleteTopic,
   onDeleteSubject,
+  onAddSubject,
 }) => {
   // Navigation hierarchy:
   // Level 0: Landing (all subjects + today's recommended plan)
@@ -204,7 +213,8 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
   const [timerSecondsLeft, setTimerSecondsLeft] = useState(25 * 60);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
 
-  // New chapter inline input
+  // New chapter modal (Document-First Setup)
+  const [isCreateChapterModalOpen, setIsCreateChapterModalOpen] = useState(false);
   const [isAddingChapter, setIsAddingChapter] = useState(false);
   const [newChapterName, setNewChapterName] = useState('');
 
@@ -691,7 +701,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
 
           {/* PRIMARY FOCUS: ALL SUBJECTS */}
           <section data-tour="learn-subjects" className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-black text-slate-900 dark:text-white">
                   Subject Folders
@@ -702,6 +712,18 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                     : 'Your subject study folders will appear here once exams or subjects are created'}
                 </p>
               </div>
+
+              {onAddSubject && (
+                <button
+                  type="button"
+                  onClick={onAddSubject}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition cursor-pointer shrink-0"
+                  title="Add a new subject folder"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Subject</span>
+                </button>
+              )}
             </div>
 
             {studySubjects.length === 0 ? (
@@ -714,15 +736,25 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                     No Subject Folders Yet
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                    Create an exam in the Plan tab to automatically build your subject folders and chapter workspaces.
+                    Create a new subject folder below to start adding chapters, or build an exam plan in the Plan tab.
                   </p>
                 </div>
-                <div className="pt-2 flex items-center justify-center">
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+                  {onAddSubject && (
+                    <button
+                      type="button"
+                      onClick={onAddSubject}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Add Subject Folder</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => onNavigateToTab?.('plan')}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+                    className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
                   >
-                    <Plus className="w-3.5 h-3.5" />
+                    <Calendar className="w-3.5 h-3.5" />
                     <span>Create Exam & Subject Plan</span>
                   </button>
                 </div>
@@ -787,6 +819,27 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                     </button>
                   );
                 })}
+
+                {/* Additional + Add Subject Folder Card in the grid */}
+                {onAddSubject && (
+                  <button
+                    type="button"
+                    onClick={onAddSubject}
+                    className="p-4 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer flex items-center gap-3.5 group min-h-[76px]"
+                  >
+                    <div className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/60 text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 flex items-center justify-center transition shrink-0">
+                      <Plus className="w-5 h-5" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition">
+                        + Add Subject Folder
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Create a new subject
+                      </div>
+                    </div>
+                  </button>
+                )}
               </div>
             )}
           </section>
@@ -816,6 +869,18 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
             </button>
 
             <div className="flex items-center gap-2">
+              {onAddSubject && (
+                <button
+                  type="button"
+                  onClick={onAddSubject}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-indigo-600 hover:border-indigo-300 dark:hover:border-indigo-800 transition cursor-pointer flex items-center gap-1 text-xs font-semibold"
+                  title="Add a new subject folder"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">New Subject</span>
+                </button>
+              )}
+
               {currentExam && (
                 <span className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5" />
@@ -890,9 +955,10 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
               <h2 className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Chapters
               </h2>
-              {onAddChapter && currentExam && (
+              {onAddChapter && (
                 <button
-                  onClick={() => setIsAddingChapter(!isAddingChapter)}
+                  type="button"
+                  onClick={() => setIsCreateChapterModalOpen(true)}
                   className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -901,54 +967,29 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
               )}
             </div>
 
-            {/* Inline add chapter form */}
-            {isAddingChapter && currentExam && (
-              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 flex items-center gap-2">
-                <input
-                  type="text"
-                  value={newChapterName}
-                  onChange={(e) => setNewChapterName(e.target.value)}
-                  placeholder="New chapter title..."
-                  className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-none"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newChapterName.trim()) {
-                      onAddChapter(currentExam.id, newChapterName.trim());
-                      setNewChapterName('');
-                      setIsAddingChapter(false);
-                    }
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    if (newChapterName.trim()) {
-                      onAddChapter(currentExam.id, newChapterName.trim());
-                      setNewChapterName('');
-                    }
-                    setIsAddingChapter(false);
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold cursor-pointer"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => setIsAddingChapter(false)}
-                  className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 text-xs cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-
             {currentChapters.length === 0 && (
-              <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-center space-y-2">
+              <div className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-center space-y-3">
                 <BookOpen className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto" />
-                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  No chapters in this folder yet
-                </p>
-                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                  Click &ldquo;Add Chapter&rdquo; above to add your first chapter, or generate your study plan in the Plan tab.
-                </p>
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    No chapters in this folder yet
+                  </p>
+                  <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                    Add chapters to start studying, take practice quizzes, and track your dynamic exam readiness.
+                  </p>
+                </div>
+                {onAddChapter && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingChapter(true)}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add First Chapter</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1070,6 +1111,19 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
             setIsConfirmingDeleteSubject(false);
           }}
         />
+
+        {/* Create New Chapter Modal (Document-First Setup) */}
+        <CreateChapterModal
+          isOpen={isCreateChapterModalOpen}
+          subjectName={currentSubject?.name || currentExam?.name}
+          onClose={() => setIsCreateChapterModalOpen(false)}
+          onCreateChapter={(data) => {
+            if (onAddChapter) {
+              const targetId = currentExam?.id || currentSubject?.id || currentSubject?.name || 'general';
+              onAddChapter(targetId, data);
+            }
+          }}
+        />
       </div>
     );
   }
@@ -1087,6 +1141,8 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
           onBack={() => setSelectedChapterId(null)}
           onUpdateChapterStatus={onUpdateChapterStatus}
           onUpdateChapterTopics={onUpdateChapterTopics}
+          onUpdateChapterSections={onUpdateChapterSections}
+          onUpdateChapterDocument={onUpdateChapterDocument}
           onDeleteChapter={
             onDeleteChapter
               ? (id, _name, examId) => {

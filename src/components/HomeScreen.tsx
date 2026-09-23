@@ -8,6 +8,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Calendar,
+  Plus,
 } from 'lucide-react';
 import { TaskItem, Exam, UserProfile, Flashcard, SubjectItem, Chapter } from '../types';
 import { isCardDue } from '../utils/spacedRepetition';
@@ -47,6 +48,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   nextTask,
   nextExam,
   flashcards = [],
+  onAddSubject,
   onStartFocusTask,
   onStartRecallSession,
   onNavigateToRecall,
@@ -122,9 +124,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <h2 className="text-xs font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
             Today&apos;s Study
           </h2>
-          <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
-            2 priorities
-          </span>
+          <div className="flex items-center gap-3">
+            {onAddSubject && (
+              <button
+                type="button"
+                onClick={onAddSubject}
+                className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer transition"
+                title="Create a new subject folder"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Subject</span>
+              </button>
+            )}
+            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+              2 priorities
+            </span>
+          </div>
         </div>
 
         {/* --------------------------------------------------------------------- */}

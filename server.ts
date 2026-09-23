@@ -2,6 +2,10 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
+import { processDocumentWithGemini } from './src/api/chapters/process-document';
+import { inspectUploadedDocument } from './src/api/debug/inspect-document';
+import { extractChapterMilestones } from './src/api/chapters/extract-milestones';
+import { generateMilestoneContent } from './src/api/chapters/generate-milestone-content';
 
 const app = express();
 const PORT = 3000;
@@ -27,9 +31,17 @@ function getAI(): GoogleGenAI | null {
   return aiClient;
 }
 
+function formatErrorNote(err: any): string {
+  const status = err?.status || err?.code || err?.error?.code;
+  if (status) return `status ${status}`;
+  if (`${err?.message}`.includes('503')) return 'status 503 high demand';
+  if (`${err?.message}`.includes('429')) return 'status 429 rate limit';
+  return 'offline mode';
+}
+
 /**
  * Executes generateContent with multi-model fallback to protect against 503 high-demand spikes.
- * Uses gemini-3.1-flash-lite as primary fast model and gemini-3.8-flash as alternative.
+ * Uses gemini-3.8-flash, gemini-3.6-flash, gemini-flash-latest, and gemini-3.1-flash-lite.
  */
 async function generateGeminiContent(
   ai: GoogleGenAI,
@@ -39,10 +51,19 @@ async function generateGeminiContent(
     preferredModel?: string;
   }
 ) {
-  const models = options.preferredModel
-    ? [options.preferredModel, 'gemini-3.1-flash-lite', 'gemini-3.8-flash']
-    : ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
-  const uniqueModels = Array.from(new Set(models));
+  const preferred =
+    options.preferredModel && options.preferredModel !== 'gemini-2.5-flash'
+      ? options.preferredModel
+      : 'gemini-3.8-flash';
+
+  const models = [
+    preferred,
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
+  ];
+  const uniqueModels = Array.from(new Set(models)).filter((m) => m !== 'gemini-2.5-flash');
 
   let lastError: any = null;
   for (const model of uniqueModels) {
@@ -57,7 +78,11 @@ async function generateGeminiContent(
       }
     } catch (err: any) {
       lastError = err;
-      console.warn(`[Gemini] Model ${model} unavailable (e.g. 503 high demand), trying next model:`, err?.message || err);
+      const statusNote = formatErrorNote(err);
+      console.warn(`[Gemini] Model ${model} unavailable (${statusNote}), trying alternative`);
+      if (statusNote.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
     }
   }
   throw lastError || new Error('All Gemini models failed');
@@ -71,6 +96,90 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
   });
+});
+
+// -------------------------------------------------------------
+// Document Extraction Diagnostic Health Check
+// -------------------------------------------------------------
+app.post('/api/debug/inspect-document', async (req, res) => {
+  try {
+    const result = await inspectUploadedDocument(req.body);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('[Debug /api/debug/inspect-document] Diagnostic failed:', error);
+    return res.status(500).json({
+      error: 'DIAGNOSTIC_FAILURE',
+      message: error?.message || 'Failed to inspect document payload.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// AI Milestone & Study Assets Extraction Pipeline
+// -------------------------------------------------------------
+app.post('/api/chapters/process-document', async (req, res) => {
+  try {
+    const { chapterName, subject, documentName, rawText, inlinePdf, mimeType } = req.body;
+    if (!chapterName) {
+      return res.status(400).json({ error: 'chapterName is required' });
+    }
+
+    const result = await processDocumentWithGemini({
+      chapterName,
+      subject,
+      documentName,
+      rawText,
+      inlinePdf,
+      mimeType,
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error in /api/chapters/process-document:', error);
+    if (error?.code === 'UNREADABLE_DOCUMENT' || error?.status === 400) {
+      return res.status(400).json({
+        error: 'UNREADABLE_DOCUMENT',
+        message: error.message || 'The document contains no readable text. It may be an image-only scanned PDF or password protected. Please run OCR or upload a text-based document.',
+        characterCount: error.characterCount || 0,
+      });
+    }
+    return res.status(500).json({ error: error.message || 'Failed to process document' });
+  }
+});
+
+// -------------------------------------------------------------
+// Phase A: Fast Milestone Outline Discovery
+// -------------------------------------------------------------
+app.post('/api/chapters/extract-milestones', async (req, res) => {
+  try {
+    const result = await extractChapterMilestones(req.body);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error in /api/chapters/extract-milestones:', error);
+    const status = error.status || (error.code === 'INVALID_INPUT' ? 400 : 500);
+    return res.status(status).json({
+      error: error.code || 'EXTRACTION_ERROR',
+      message: error.message || 'Failed to extract milestones from text.',
+      characterCount: error.characterCount,
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Phase B: On-Demand Detail Generator
+// -------------------------------------------------------------
+app.post('/api/chapters/generate-milestone-content', async (req, res) => {
+  try {
+    const result = await generateMilestoneContent(req.body);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error in /api/chapters/generate-milestone-content:', error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'GENERATION_ERROR',
+      message: error.message || 'Failed to generate milestone content.',
+    });
+  }
 });
 
 // -------------------------------------------------------------
@@ -131,7 +240,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for chapter-notes (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[ChapterNotes] API unavailable (${formatErrorNote(aiErr)}), using curriculum fallback`);
       }
     }
 
@@ -225,7 +334,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for flashcards (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[Flashcards] API unavailable (${formatErrorNote(aiErr)}), using curriculum fallback`);
       }
     }
 
@@ -432,7 +541,7 @@ Return pure JSON with no markdown wrapping:
         }));
       }
     } catch (e) {
-      console.warn('Topic extraction in helper failed, using structured fallback:', e);
+      console.warn(`[TopicExtraction] Unavailable (${formatErrorNote(e)}), using structured fallback`);
     }
   }
 
@@ -587,7 +696,7 @@ Return pure JSON with no markdown wrapping:
           return res.json({ questions: sanitized });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for chapter-test, falling back to topic-anchored engine:', aiErr.message || aiErr);
+        console.warn(`[ChapterTest] API unavailable (${formatErrorNote(aiErr)}), using topic-anchored engine`);
       }
     }
 
@@ -988,7 +1097,7 @@ Return pure JSON with no markdown wrapping:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for practice-session, falling back to curated curriculum:', aiErr.message || aiErr);
+        console.warn(`[PracticeSession] API unavailable (${formatErrorNote(aiErr)}), using curated curriculum`);
       }
     }
 
@@ -1285,7 +1394,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for evaluate-practice-answer, using algorithmic verification:', aiErr.message || aiErr);
+        console.warn(`[EvaluatePractice] API unavailable (${formatErrorNote(aiErr)}), using algorithmic verification`);
       }
     }
 
@@ -1453,7 +1562,7 @@ Return pure JSON matching this exact schema:
 
         const response = await generateGeminiContent(ai, {
           contents: contentsParts,
-          preferredModel: 'gemini-2.5-flash',
+          preferredModel: 'gemini-3.8-flash',
           config: {
             responseMimeType: 'application/json',
             temperature: 0.2,
@@ -1471,7 +1580,7 @@ Return pure JSON matching this exact schema:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for /api/evaluate/answer, using robust heuristic fallback:', aiErr.message || aiErr);
+        console.warn(`[EvaluateAnswer] API unavailable (${formatErrorNote(aiErr)}), using heuristic fallback`);
       }
     }
 
@@ -1587,7 +1696,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for similar-question, using algorithmic generator:', aiErr.message || aiErr);
+        console.warn(`[SimilarQuestion] API unavailable (${formatErrorNote(aiErr)}), using algorithmic generator`);
       }
     }
 
@@ -1694,7 +1803,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for review-test (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[ReviewTest] API unavailable (${formatErrorNote(aiErr)}), using fallback engine`);
       }
     }
 
@@ -1820,7 +1929,7 @@ Return pure JSON with no markdown wrapping:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for spaced-revision-plan (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[SpacedRevision] API unavailable (${formatErrorNote(aiErr)}), using schedule fallback`);
       }
     }
 
@@ -1946,7 +2055,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for recall-gap (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[RecallGap] API unavailable (${formatErrorNote(aiErr)}), using curriculum gap analysis`);
       }
     }
 
@@ -2099,7 +2208,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for notes-from-materials (e.g. 503 high demand), falling back:', aiErr.message || aiErr);
+        console.warn(`[NotesFromMaterials] API unavailable (${formatErrorNote(aiErr)}), using structured notes fallback`);
       }
     }
 
@@ -2217,7 +2326,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for flashcards-from-content, falling back:', aiErr.message || aiErr);
+        console.warn(`[FlashcardsFromContent] API unavailable (${formatErrorNote(aiErr)}), using atomic cards fallback`);
       }
     }
 
@@ -2362,7 +2471,7 @@ Return pure JSON with no markdown wrapping:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for extract-chapter-topics:', aiErr.message || aiErr);
+        console.warn(`[ExtractChapterTopics] API unavailable (${formatErrorNote(aiErr)}), using standard curriculum breakdown`);
       }
     }
 
@@ -2519,7 +2628,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for feynman-record, falling back:', aiErr.message || aiErr);
+        console.warn(`[FeynmanRecord] API unavailable (${formatErrorNote(aiErr)}), using structured speech synthesis`);
       }
     }
 
@@ -2731,7 +2840,7 @@ Return pure JSON with no markdown wrapping:
           });
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for verify-recall, falling back to topic-anchored engine:', aiErr.message || aiErr);
+        console.warn(`[VerifyRecall] API unavailable (${formatErrorNote(aiErr)}), using semantic anchor engine`);
       }
     }
 
@@ -2967,7 +3076,7 @@ Return pure JSON with no markdown wrapping:
           return res.json(parsed);
         }
       } catch (geminiError: any) {
-        console.warn('Gemini API call failed during handwriting conversion (e.g. temporary 503 high demand or formatting issue), falling back to curated chapter transcription:', geminiError.message || geminiError);
+        console.warn(`[HandwritingOCR] API unavailable (${formatErrorNote(geminiError)}), using curated chapter transcription`);
       }
     }
 
@@ -3099,7 +3208,7 @@ Return strictly valid JSON with no markdown backticks:
           return res.json(parsed);
         }
       } catch (aiErr: any) {
-        console.warn('Gemini API call failed for eli5, using offline fallback:', aiErr.message || aiErr);
+        console.warn(`[ELI5] API unavailable (${formatErrorNote(aiErr)}), using intuitive conceptual breakdown`);
       }
     }
 
