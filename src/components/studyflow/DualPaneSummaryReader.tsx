@@ -395,19 +395,6 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
                   {summaryDepth === 'compact' ? '3 min overview' : '8 min deep-dive'}
                 </span>
               </div>
-
-              {section.keyTopics && section.keyTopics.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {section.keyTopics.map((kt, i) => (
-                    <span
-                      key={i}
-                      className="px-2.5 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60"
-                    >
-                      #{kt}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Typography-focused Markdown Reader (prose-slate / dark:prose-invert) */}

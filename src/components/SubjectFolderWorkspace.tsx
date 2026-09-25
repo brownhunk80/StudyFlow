@@ -1150,7 +1150,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                 )}
               </div>
               <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5">
-                # {activeChapter.name}
+                {activeChapter.name}
               </h2>
             </div>
 
@@ -1748,7 +1748,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
                     ACTIVE RETRIEVAL SUMMARY
                   </span>
                   <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-1">
-                    # Great recall effort!
+                    Great recall effort!
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     Here is what you retrieved from memory vs what needs targeted reinforcement before your exam:

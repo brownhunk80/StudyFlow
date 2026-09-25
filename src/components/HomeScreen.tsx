@@ -10,7 +10,7 @@ import {
   Calendar,
   Plus,
 } from 'lucide-react';
-import { TaskItem, Exam, UserProfile, Flashcard, SubjectItem, Chapter } from '../types';
+import { TaskItem, Exam, UserProfile, Flashcard, FlashcardDeck, SubjectItem, Chapter } from '../types';
 import { isCardDue } from '../utils/spacedRepetition';
 import { useOnboarding } from '../context/OnboardingContext';
 import { PageGuideButton } from './guide/PageGuideButton';
@@ -29,6 +29,7 @@ interface HomeScreenProps {
   };
   nextExam: Exam | null;
   flashcards?: Flashcard[];
+  decks?: FlashcardDeck[];
   onOpenSubjectFolder: (subject: SubjectItem, exam?: Exam) => void;
   onAddSubject?: () => void;
   onStartFocusTask: (task?: TaskItem) => void;
@@ -48,6 +49,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   nextTask,
   nextExam,
   flashcards = [],
+  decks = [],
   onAddSubject,
   onStartFocusTask,
   onStartRecallSession,
@@ -268,7 +270,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
 
           {/* Subject & Chapter Context */}
-          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300">
+          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 space-y-2.5">
             {dueCards.length > 0 ? (
               <div className="space-y-1">
                 <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -291,6 +293,58 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   ? 'No flashcards created yet. Creating an exam study plan or adding cards will schedule active recall sessions for you.'
                   : 'Your memory retention is fully protected for today. Cards will appear here as spaced repetition intervals mature.'}
               </p>
+            )}
+
+            {/* Decks Preview from Learn Curriculum */}
+            {decks.length > 0 && (
+              <div className="pt-1 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1.5">
+                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Decks ({decks.length}):</span>
+                  {onNavigateToRecall && (
+                    <button
+                      type="button"
+                      onClick={onNavigateToRecall}
+                      className="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer lowercase font-medium text-[11px]"
+                    >
+                      view all in recall →
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+                  {decks.slice(0, 3).map((deck) => {
+                    const deckCards = (flashcards || []).filter((c) => c.deckId === deck.id);
+                    const dueCount = deckCards.filter(isCardDue).length;
+                    return (
+                      <div
+                        key={deck.id}
+                        onClick={() =>
+                          onStartRecallSession
+                            ? onStartRecallSession(deck.id)
+                            : onNavigateToRecall?.()
+                        }
+                        className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-700/60 border border-slate-200/70 dark:border-slate-600/70 hover:border-indigo-300 dark:hover:border-indigo-600 cursor-pointer transition group"
+                      >
+                        <div className="truncate mr-2">
+                          <div className="font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate text-xs">
+                            {deck.title}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {deck.subject} • {deckCards.length} cards{' '}
+                            {dueCount > 0 && (
+                              <span className="text-rose-500 dark:text-rose-400 font-bold">
+                                • {dueCount} due
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-300 font-bold text-[10px] shrink-0">
+                          Review →
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 

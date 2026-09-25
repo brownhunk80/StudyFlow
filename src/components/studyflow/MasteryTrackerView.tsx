@@ -327,20 +327,6 @@ export const MasteryTrackerView: React.FC<MasteryTrackerViewProps> = ({
                     {section.title}
                   </h4>
 
-                  {/* Key Topics Tags */}
-                  {section.keyTopics && section.keyTopics.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-0.5">
-                      {section.keyTopics.map((kt, kIdx) => (
-                        <span
-                          key={kIdx}
-                          className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-slate-600 dark:text-slate-300"
-                        >
-                          #{kt}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
                   {/* Section Mini Progress Bar */}
                   <div className="w-full max-w-md bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                     <div

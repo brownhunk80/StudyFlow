@@ -1,5 +1,4 @@
-import * as pdfParseModule from 'pdf-parse';
-const pdfParse: any = (pdfParseModule as any).default || pdfParseModule;
+import { PDFParse } from 'pdf-parse';
 
 export interface InspectDocumentRequest {
   fileName?: string;
@@ -45,7 +44,7 @@ export async function parsePdfBuffer(buffer: Buffer): Promise<{
   let pageCount = 1;
 
   try {
-    const PDFParseClass = (pdfParseModule as any).PDFParse || (pdfParseModule as any).default?.PDFParse;
+    const PDFParseClass: any = PDFParse;
 
     if (typeof PDFParseClass === 'function') {
       const parser = new PDFParseClass({ data: buffer });
@@ -73,14 +72,6 @@ export async function parsePdfBuffer(buffer: Buffer): Promise<{
           pageCount = res.total || 1;
         }
       }
-    } else if (typeof (pdfParseModule as any).default === 'function') {
-      const data = await (pdfParseModule as any).default(buffer);
-      text = (data.text || '').trim();
-      pageCount = Math.max(1, data.numpages || 1);
-    } else if (typeof (pdfParseModule as any) === 'function') {
-      const data = await (pdfParseModule as any)(buffer);
-      text = (data.text || '').trim();
-      pageCount = Math.max(1, data.numpages || 1);
     }
   } catch (err: any) {
     console.warn('[PDFParse] Standard pdf-parse failed, attempting stream fallback:', err?.message || err);

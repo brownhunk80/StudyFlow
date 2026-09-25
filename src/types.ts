@@ -59,6 +59,8 @@ export interface FlashcardDeck {
   dueCardsCount: number;
   masteredCount: number;
   lastStudied?: string;
+  chapterId?: string;
+  sectionId?: string;
 }
 
 export interface ChapterMaterial {
@@ -282,6 +284,7 @@ export interface ChapterTopicItem {
 export interface Chapter {
   id: string;
   name: string;
+  documentText?: string;
   subjectId?: string;
   subject?: string;
   examId?: string;
@@ -660,6 +663,14 @@ export interface Section {
   legacyTopicId?: string; // Tracks migration from ChapterTopicItem.id
   summary?: string;
   summaries?: Summary[];
+  sectionTextExcerpt?: string;
+  checkLearningQuestions?: any[];
+  recallDeck?: Array<{
+    front: string;
+    back: string;
+    sourceExcerpt?: string;
+    explanation?: string;
+  }>;
   knowledgeQuestions?: KnowledgeQuestion[];
   flashcards?: DocumentFlashcard[];
   quizzes?: Quiz[];

@@ -54,6 +54,10 @@ import {
 } from './data/initialData';
 import { calculateNextReview, isCardDue } from './utils/spacedRepetition';
 import { fetchExtractChapterTopics } from './utils/aiClient';
+import {
+  extractLearnTabDecksAndCards,
+  syncReviewedCardToLearnStorage,
+} from './utils/learnDeckSync';
 
 const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v5_dynamic_milestones';
 if (typeof window !== 'undefined') {
@@ -210,6 +214,48 @@ export default function App() {
       return initialFlashcardDecks;
     }
   });
+
+  // Dynamic sync trigger to immediately refresh when cards are rated or updated
+  const [syncNonce, setSyncNonce] = useState<number>(0);
+
+  useEffect(() => {
+    const handleSync = () => setSyncNonce((n) => n + 1);
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('studyflow_cards_updated', handleSync);
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('studyflow_cards_updated', handleSync);
+    };
+  }, []);
+
+  // Dynamically extract and synchronize all recall decks & flashcards from the "Learn" tab chapters & sections
+  const { learnDecks, learnCards } = useMemo(() => {
+    return extractLearnTabDecksAndCards(exams);
+  }, [exams, activeTab, syncNonce]);
+
+  // Combined Decks: Custom created decks + Learn tab curriculum decks
+  const combinedDecks = useMemo(() => {
+    const customIds = new Set(decks.map((d) => d.id));
+    const merged = [...decks];
+    learnDecks.forEach((ld) => {
+      if (!customIds.has(ld.id)) {
+        merged.push(ld);
+      }
+    });
+    return merged;
+  }, [decks, learnDecks]);
+
+  // Combined Flashcards: Custom created cards + Learn tab curriculum cards
+  const combinedFlashcards = useMemo(() => {
+    const customIds = new Set(flashcards.map((c) => c.id));
+    const merged = [...flashcards];
+    learnCards.forEach((lc) => {
+      if (!customIds.has(lc.id)) {
+        merged.push(lc);
+      }
+    });
+    return merged;
+  }, [flashcards, learnCards]);
 
   // Daily Metrics
   const [todayFocusMinutes, setTodayFocusMinutes] = useState<number>(0);
@@ -1019,16 +1065,28 @@ export default function App() {
 
   // ================= Active Recall & Spaced Repetition Handlers =================
   const handleRateCard = (cardId: string, rating: RecallRating, updatedFields?: Partial<Flashcard>) => {
-    setFlashcards((prev) =>
-      prev.map((card) => {
-        if (card.id !== cardId) return card;
-        const updatedParams = updatedFields || calculateNextReview(card, rating);
-        return {
-          ...card,
-          ...updatedParams,
-        };
-      })
-    );
+    const existingCard =
+      combinedFlashcards.find((c) => c.id === cardId) ||
+      flashcards.find((c) => c.id === cardId) ||
+      ({} as Flashcard);
+    const updatedParams = updatedFields || calculateNextReview(existingCard, rating);
+
+    setFlashcards((prev) => {
+      const exists = prev.some((c) => c.id === cardId);
+      if (exists) {
+        return prev.map((card) => {
+          if (card.id !== cardId) return card;
+          return {
+            ...card,
+            ...updatedParams,
+          };
+        });
+      }
+      return prev;
+    });
+
+    // Bidirectional sync: sync SM-2 review parameters back to Learn Tab storage
+    syncReviewedCardToLearnStorage(cardId, updatedParams, rating);
 
     // Award student XP for active recall effort
     setUser((prev) => ({
@@ -1042,19 +1100,19 @@ export default function App() {
     let title = 'All Due Cards';
 
     if (deckId) {
-      const deck = decks.find((d) => d.id === deckId);
+      const deck = combinedDecks.find((d) => d.id === deckId);
       title = deck ? (deck.title || (deck as unknown as { name?: string }).name || 'Deck Practice') : 'Deck Practice';
-      targetCards = flashcards.filter((c) => c.deckId === deckId);
+      targetCards = combinedFlashcards.filter((c) => c.deckId === deckId);
     } else if (subject) {
       title = `${subject} Practice`;
-      targetCards = flashcards.filter((c) => c.subject.toLowerCase() === subject.toLowerCase());
+      targetCards = combinedFlashcards.filter((c) => c.subject.toLowerCase() === subject.toLowerCase());
       if (targetCards.length === 0) {
-        targetCards = flashcards;
+        targetCards = combinedFlashcards;
       }
     } else {
-      targetCards = flashcards.filter(isCardDue);
+      targetCards = combinedFlashcards.filter(isCardDue);
       if (targetCards.length === 0) {
-        targetCards = flashcards;
+        targetCards = combinedFlashcards;
       }
     }
 
@@ -1066,7 +1124,7 @@ export default function App() {
   };
 
   const handleGenerateAIFlashcards = (topic: string, targetDeckId: string) => {
-    const targetDeck = decks.find((d) => d.id === targetDeckId) || decks[0];
+    const targetDeck = combinedDecks.find((d) => d.id === targetDeckId) || combinedDecks[0];
     const subject = targetDeck ? targetDeck.subject : 'General';
 
     const newGeneratedCards: Flashcard[] = [
@@ -1211,7 +1269,7 @@ export default function App() {
 
   const todayTasksCount = (tasks || []).filter((t) => t.dateCategory === 'today').length;
   const todayCompletedCount = (tasks || []).filter((t) => t.dateCategory === 'today' && t.completed).length;
-  const dueFlashcardsCount = (flashcards || []).filter(isCardDue).length;
+  const dueFlashcardsCount = (combinedFlashcards || []).filter(isCardDue).length;
 
   // If not authenticated, render the exact Figma Login Screen
   if (!isAuthenticated) {
@@ -1258,8 +1316,8 @@ export default function App() {
                   )
                 )?.chapters || []
               }
-              decks={decks}
-              flashcards={flashcards}
+              decks={combinedDecks}
+              flashcards={combinedFlashcards}
               onBack={() => setActiveFolderSubject(null)}
               onUpdateChapterNotes={(chapterId, notes, rawNotesText, handwrittenNotes) => {
                 const currentExam =
@@ -1399,7 +1457,8 @@ export default function App() {
                 sessionsCount: todaySessionsCount,
               }}
               nextExam={nextExam}
-              flashcards={flashcards}
+              flashcards={combinedFlashcards}
+              decks={combinedDecks}
               onOpenSubjectFolder={(subj, exam) => {
                 setActiveFocusTask({
                   id: 'task-subj-learn-' + Date.now(),
@@ -1436,8 +1495,8 @@ export default function App() {
             tasks={tasks}
             subjects={subjects}
             exams={exams}
-            flashcards={flashcards}
-            decks={decks}
+            flashcards={combinedFlashcards}
+            decks={combinedDecks}
             onSessionComplete={handleSessionComplete}
             onClearInitialTask={() => setActiveFocusTask(null)}
             onNavigateToTab={(tab) => setActiveTab(tab)}
@@ -1561,9 +1620,9 @@ export default function App() {
 
         {activeTab === 'recall' && (
           <RecallScreen
-            cards={flashcards}
-            flashcards={flashcards}
-            decks={decks}
+            cards={combinedFlashcards}
+            flashcards={combinedFlashcards}
+            decks={combinedDecks}
             subjects={subjects}
             onStartRecallSession={(deckId, subject) => handleStartRecallSession(deckId, subject)}
             onOpenAddCard={(deckId) => {
@@ -1714,7 +1773,7 @@ export default function App() {
             exams={exams}
             streakDays={user.streakDays}
             achievements={achievements}
-            flashcards={flashcards}
+            flashcards={combinedFlashcards}
             tasks={tasks}
             onOpenExamPrep={(examId) => setExamPrepExamId(examId)}
             onStartRecall={() => handleStartRecallSession()}
@@ -1792,8 +1851,8 @@ export default function App() {
         onToggleChapterStatus={handleToggleChapterStatus}
         onDeleteChapter={handleDeleteChapter}
         onAddExam={() => setIsAddExamModalOpen(true)}
-        decks={decks}
-        flashcards={flashcards}
+        decks={combinedDecks}
+        flashcards={combinedFlashcards}
         tasks={tasks}
         onAddFlashcards={(newCards) => {
           const formatted: Flashcard[] = newCards.map((c, idx) => ({

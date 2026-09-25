@@ -29,7 +29,7 @@ import {
   ListFilter,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Section, QuizMode, QuizQuestion } from '../../types';
+import { Section, QuizMode, QuizQuestion, QuestionDifficulty } from '../../types';
 import {
   CheckLearningConfigModal,
   DrillConfig,
@@ -40,34 +40,201 @@ import { ConceptDeconstructionDrawer } from './ConceptDeconstructionDrawer';
 import { PerformanceDiagnosticView } from './PerformanceDiagnosticView';
 import { fetchEvaluateAnswer, MultimodalEvaluationResult } from '../../utils/aiClient';
 
-export interface EnrichedQuizQuestion extends QuizQuestion {
+export interface EnrichedQuizQuestion extends Omit<QuizQuestion, 'difficulty'> {
   type: 'multiple_choice' | 'free_response';
+  difficulty?: QuestionDifficulty | 'Applied Reasoning' | 'Direct Recall' | string;
   correctAnalysis: string; // "Why the Correct Answer Works"
   distractorAnalyses: Record<number, string>; // "Trap Analysis: Why Other Choices Are Incorrect"
   modelAnswer?: string; // For open response questions
+  sourceAnchorQuote?: string; // Verbatim anchor sentence from text excerpt
+  keyScoringPoints?: string[]; // Essential criteria for full credit
 }
 
-interface CheckLearningDrillModalProps {
-  section: Section;
-  chapterName: string;
+export interface CheckLearningDrillModalProps {
+  section?: Section;
+  activeMilestone?: Section;
+  chapterName?: string;
   subjectName?: string;
+  chapterRawText?: string;
   isOpen: boolean;
   initialMode?: 'study' | 'test'; // study = Practice Mode, test = Exam Mode
   onClose: () => void;
   onDrillComplete?: (sectionId: string, score: number, timeTakenSec: number) => void;
   onOpenSummaryForMissed?: (section: Section, missedTopics: string[]) => void;
+  onSaveMilestoneQuestions?: (sectionId: string, questions: any[]) => void;
+}
+
+/**
+ * Extract questions attached to a milestone/section if already present
+ */
+function extractMilestoneQuestions(
+  m: any,
+  defaultDifficulty: string = 'Applied Reasoning'
+): EnrichedQuizQuestion[] {
+  if (!m) return [];
+
+  const rawList: any[] =
+    (Array.isArray(m.questions) && m.questions.length > 0 && m.questions) ||
+    (Array.isArray(m.quizzes?.[0]?.questions) && m.quizzes[0].questions.length > 0 && m.quizzes[0].questions) ||
+    (Array.isArray(m.checkLearning) && m.checkLearning.length > 0 && m.checkLearning) ||
+    (Array.isArray(m.checkLearningQuestions) && m.checkLearningQuestions.length > 0 && m.checkLearningQuestions) ||
+    (Array.isArray(m.knowledgeQuestions) && m.knowledgeQuestions.length > 0 && m.knowledgeQuestions) ||
+    [];
+
+  if (rawList.length === 0) return [];
+
+  const coreTopics: string[] =
+    (Array.isArray(m.coreTopics) && m.coreTopics.length > 0 && m.coreTopics) ||
+    (Array.isArray(m.keyTopics) && m.keyTopics.length > 0 && m.keyTopics) ||
+    [m.title || 'Core Principles'];
+
+  return rawList.map((q: any, idx: number) => {
+    const qText = q.questionText || q.question || q.prompt || '';
+    const choices =
+      Array.isArray(q.choices) && q.choices.length > 0
+        ? q.choices
+        : Array.isArray(q.options) && q.options.length > 0
+          ? q.options
+          : ['True', 'False'];
+
+    let correctIdx = 0;
+    if (typeof q.correctIndex === 'number') {
+      correctIdx = q.correctIndex;
+    } else if (typeof q.correctAnswer === 'number') {
+      correctIdx = q.correctAnswer;
+    } else if (typeof q.correctAnswer === 'string') {
+      const matchIdx = choices.findIndex(
+        (c: string) => c.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase()
+      );
+      correctIdx = matchIdx >= 0 ? matchIdx : 0;
+    }
+
+    const topicTag =
+      q.topicTag ||
+      coreTopics[idx % coreTopics.length] ||
+      coreTopics[0] ||
+      m.title ||
+      'Key Concept';
+
+    const difficulty =
+      q.difficulty ||
+      (idx % 2 === 0 ? 'Applied Reasoning' : 'Direct Recall') ||
+      defaultDifficulty;
+
+    const isFree =
+      q.type === 'free_response' ||
+      (!q.options && !q.choices && (q.sampleAnswer || q.userResponse));
+
+    return {
+      id: q.id || `chk-${m.id || 'q'}-${idx + 1}`,
+      quizId: q.quizId || `chk-${m.id || 'q'}`,
+      type: isFree ? ('free_response' as const) : ('multiple_choice' as const),
+      questionText: qText,
+      choices,
+      correctIndex: correctIdx,
+      explanation: q.explanation || q.correctAnalysis || 'Verified syllabus reasoning.',
+      topicTag,
+      difficulty,
+      correctAnalysis:
+        q.correctAnalysis ||
+        q.explanation ||
+        `Step-by-step validation verifies that this option directly fulfills the criteria for ${topicTag}.`,
+      distractorAnalyses:
+        q.distractorAnalyses ||
+        (q.misdirectionBreakdown ? { 1: q.misdirectionBreakdown } : {}),
+      modelAnswer: q.modelAnswer || q.sampleAnswer || q.explanation || undefined,
+      sourceAnchorQuote: q.sourceAnchorQuote || q.sourceCitation || undefined,
+      keyScoringPoints:
+        Array.isArray(q.keyScoringPoints) && q.keyScoringPoints.length > 0
+          ? q.keyScoringPoints
+          : undefined,
+    };
+  });
+}
+
+/**
+ * Grounded fallback generator when API is offline or returns empty
+ */
+function generateDynamicFallbackQuestions(m: any, chapterName?: string): EnrichedQuizQuestion[] {
+  const topics: string[] =
+    (Array.isArray(m?.coreTopics) && m.coreTopics.length > 0 && m.coreTopics) ||
+    (Array.isArray(m?.keyTopics) && m.keyTopics.length > 0 && m.keyTopics) ||
+    [m?.title || 'Core Subject Matter'];
+  const title = m?.title || topics[0] || 'Core Subject Matter';
+
+  return topics.slice(0, 4).map((topic: string, idx: number) => {
+    const isRecall = idx % 2 === 0;
+    return {
+      id: `chk-${m?.id || 'gen'}-${idx + 1}`,
+      quizId: `chk-${m?.id || 'gen'}`,
+      type: 'multiple_choice' as const,
+      questionText: isRecall
+        ? `What is the primary conceptual definition and governing framework of "${topic}" in ${title}?`
+        : `In a practical scenario involving "${topic}", which analytical approach yields the most accurate conclusion?`,
+      choices: [
+        `It establishes the foundational relationships and governing criteria defining ${topic}.`,
+        `It operates inversely to standard experimental observations and syllabus conventions.`,
+        `It applies solely in isolated theoretical approximations with no curriculum relevance.`,
+        `It functions as an auxiliary calculation independent of ${title}.`,
+      ],
+      correctIndex: 0,
+      explanation: `"${topic}" serves as an essential foundation in "${title}", establishing the key principles and analytical steps required for mastery.`,
+      topicTag: topic,
+      difficulty: isRecall ? 'Direct Recall' : 'Applied Reasoning',
+      correctAnalysis: `Option A correctly identifies how "${topic}" serves as the governing framework in ${title}.`,
+      distractorAnalyses: {
+        1: `Incorrect: This contradicts the established principles of ${topic}.`,
+        2: `Incorrect: "${topic}" is a primary curriculum topic with direct practical significance.`,
+        3: `Incorrect: It is deeply integrated into ${title}.`,
+      },
+      modelAnswer: `"${topic}" represents a core principle within "${title}" that establishes essential criteria and systemic relationships.`,
+    };
+  });
+}
+
+/**
+ * Dynamic textarea placeholder based on subject
+ */
+function getAnswerTextareaPlaceholder(subject?: string): string {
+  const s = (subject || '').trim().toLowerCase();
+  if (s.includes('math') || s.includes('calc') || s.includes('algebra') || s.includes('geometry') || s.includes('stat')) {
+    return 'Write your step-by-step mathematical derivation, equations, or reasoning...';
+  }
+  if (s.includes('physic') || s.includes('mechanic') || s.includes('thermo') || s.includes('optic')) {
+    return 'Write your physical principles, governing relations, equations, or reasoning...';
+  }
+  if (s.includes('chem')) {
+    return 'Write your chemical equations, reaction mechanisms, or reasoning...';
+  }
+  if (s.includes('bio') || s.includes('life')) {
+    return 'Write your biological mechanisms, pathways, or reasoning...';
+  }
+  if (s.includes('history') || s.includes('social') || s.includes('civic') || s.includes('politi')) {
+    return 'Write your historical analysis, contextual evidence, or reasoning...';
+  }
+  if (s.includes('lit') || s.includes('english') || s.includes('humanities')) {
+    return 'Write your analytical commentary, textual interpretation, or reasoning...';
+  }
+  if (s.includes('cs') || s.includes('computer') || s.includes('code') || s.includes('algorithm')) {
+    return 'Write your algorithmic logic, pseudo-code, complexity analysis, or reasoning...';
+  }
+  return 'Write your explanation or reasoning...';
 }
 
 export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = ({
   section,
-  chapterName,
+  activeMilestone,
+  chapterName = 'Chapter',
   subjectName = 'Science',
+  chapterRawText,
   isOpen,
   initialMode = 'study',
   onClose,
   onDrillComplete,
   onOpenSummaryForMissed,
+  onSaveMilestoneQuestions,
 }) => {
+  const milestone = activeMilestone || section;
   // Step state: 'config' | 'runner' | 'diagnostic'
   const [step, setStep] = useState<'config' | 'runner' | 'diagnostic'>('config');
 
@@ -115,223 +282,320 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
   const [finalScore, setFinalScore] = useState(0);
   const [finalTimeSec, setFinalTimeSec] = useState(0);
 
-  // Dynamic Question Generator adapting to Section, Format, and Cognitive Depth
-  const questions: EnrichedQuizQuestion[] = useMemo(() => {
-    const title = section.title;
-    const topics = section.keyTopics && section.keyTopics.length > 0 ? section.keyTopics : [title];
-    const generated: EnrichedQuizQuestion[] = [];
+  // Dynamic question state
+  const [loadedQuestions, setLoadedQuestions] = useState<EnrichedQuizQuestion[]>([]);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState<boolean>(false);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-    const isDirectRecall = drillConfig.cognitiveDepth === 'direct_recall';
-    const isOpenResponse = drillConfig.format === 'open_response';
+  // Helper to resolve milestone text chunk
+  const resolveMilestoneTextExcerpt = useCallback((): string => {
+    if (!milestone) return '';
+    if (milestone.sectionTextExcerpt && milestone.sectionTextExcerpt.trim().length >= 60) {
+      return milestone.sectionTextExcerpt.trim();
+    }
+    if ((milestone as any).textExcerpt && (milestone as any).textExcerpt.trim().length >= 60) {
+      return (milestone as any).textExcerpt.trim();
+    }
+    if (chapterRawText && chapterRawText.trim().length >= 60) {
+      const raw = chapterRawText.trim();
+      const titleIdx = raw.toLowerCase().indexOf(milestone.title.toLowerCase());
+      if (titleIdx >= 0) {
+        const slice = raw.slice(titleIdx, titleIdx + 2500).trim();
+        if (slice.length >= 60) return slice;
+      }
+      const topics =
+        (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics) ||
+        (Array.isArray(milestone.keyTopics) && milestone.keyTopics) ||
+        [];
+      for (const t of topics) {
+        const tIdx = raw.toLowerCase().indexOf(t.toLowerCase());
+        if (tIdx >= 0) {
+          const slice = raw.slice(Math.max(0, tIdx - 150), tIdx + 2500).trim();
+          if (slice.length >= 60) return slice;
+        }
+      }
+    }
+    let textExcerpt =
+      milestone.summaries?.[1]?.contentMarkdown ||
+      milestone.summaries?.[0]?.contentMarkdown ||
+      milestone.summary ||
+      (milestone as any).contentMarkdown ||
+      '';
+    if (textExcerpt.trim().length < 60) {
+      const topics =
+        (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics) ||
+        (Array.isArray(milestone.keyTopics) && milestone.keyTopics) ||
+        [milestone.title || 'Core Principles'];
+      textExcerpt = `${milestone.title}. Key foundational topics include: ${topics.join(', ')}. This unit covers core principles, systematic mechanisms, analytical problem solving, and conceptual applications in ${chapterName}.`;
+    }
+    return textExcerpt.trim();
+  }, [milestone, chapterRawText, chapterName]);
 
-    if (isDirectRecall) {
-      // 1. Direct Recall Q1: Governing law & definitions
-      generated.push({
-        id: `chk-${section.id}-rec-1`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `What is the fundamental law and mathematical relationship for "${topics[0] || title}"?`,
-        choices: [
-          `The focal length (f) of a spherical mirror equals half its radius of curvature (f = R / 2).`,
-          `The focal length equals twice the radius of curvature (f = 2R).`,
-          `The radius of curvature is completely independent of the focal length for all mirror apertures.`,
-          `The focal length is always positive regardless of whether the mirror is concave or convex.`,
-        ],
-        correctIndex: 0,
-        explanation: `For spherical mirrors of small aperture, the principal focus lies halfway between the pole and center of curvature (f = R / 2).`,
-        topicTag: topics[0] || title,
-        difficulty: 'Recall',
-        correctAnalysis: `For paraxial rays close to the principal axis, the geometry of reflection forces rays to converge or appear to diverge through the focal point situated at R / 2. This satisfies the law of reflection (i = r).`,
-        distractorAnalyses: {
-          1: `Inverts the mathematical relation: f = 2R mistakenly doubles the radius instead of halving it.`,
-          2: `Incorrect: R and f are strictly tied by spherical geometry (R = 2f).`,
-          3: `Violates the Cartesian sign convention: Concave mirrors have negative focal length, convex have positive.`,
-        },
-        modelAnswer: `For spherical mirrors of small aperture, the focal length (f) is exactly half the radius of curvature (f = R / 2).`,
-      });
+  // Milestone core topics for pill rendering
+  const milestoneCoreTopics = useMemo(() => {
+    if (!milestone) return ['Core Principles'];
+    if (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics.length > 0) {
+      return (milestone as any).coreTopics;
+    }
+    if (Array.isArray(milestone.keyTopics) && milestone.keyTopics.length > 0) {
+      return milestone.keyTopics;
+    }
+    return [milestone.title || 'Core Principles'];
+  }, [milestone]);
 
-      // 2. Direct Recall Q2: Cartesian Sign Convention
-      generated.push({
-        id: `chk-${section.id}-rec-2`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `Under the New Cartesian Sign Convention, why is object distance (u) always assigned a negative sign?`,
-        choices: [
-          `Because the object is stationed to the left of the mirror, opposite to incident ray direction.`,
-          `Because physical objects inherently have negative mass and height in geometrical optics.`,
-          `Because specular reflection always inverts the sign of coordinate coordinates along the principal axis.`,
-          `Because focal length is negative for all optical systems without exception.`,
-        ],
-        correctIndex: 0,
-        explanation: `Distances measured opposite to the direction of incident light (conventionally left of the pole) are taken as negative.`,
-        topicTag: topics[1] || 'Cartesian Sign Convention',
-        difficulty: 'Recall',
-        correctAnalysis: `The origin is set at the pole (P). Incident light travels left-to-right. Since the object is placed to the left, the vector from pole to object points opposite to incoming light, defining a negative coordinate (-u).`,
-        distractorAnalyses: {
-          1: `False premise: Object mass and material dimensions do not affect Cartesian coordinates.`,
-          2: `Specular reflection changes light trajectories, not coordinate axes definitions.`,
-          3: `Erroneous rule: Convex mirrors and converging lenses have positive focal lengths.`,
-        },
-        modelAnswer: `Distances measured against the direction of incident light (to the left of the pole) are conventionally negative.`,
-      });
+  // Dynamically bind runner question state to active milestone
+  // If activeMilestone.questions / checkLearningQuestions is empty or undefined, fetch from /api/check-learning/generate
+  useEffect(() => {
+    if (!isOpen || !milestone) return;
 
-      // 3. Direct Recall Q3: Image Characteristics
-      generated.push({
-        id: `chk-${section.id}-rec-3`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `A concave mirror produces an erect, magnified, and virtual image only when the object is placed at which position?`,
-        choices: [
-          `Between the pole (P) and the principal focus (F).`,
-          `At the center of curvature (C).`,
-          `Beyond the center of curvature (C).`,
-          `At infinity.`,
-        ],
-        correctIndex: 0,
-        explanation: `When an object is placed between P and F, reflected rays diverge; their backward extensions form an erect, magnified virtual image behind the mirror.`,
-        topicTag: topics[2] || 'Image Formation Rules',
-        difficulty: 'Recall',
-        correctAnalysis: `Between P and F is the unique boundary case where reflected rays diverge in front of the mirror, necessitating backward projection behind the mirror plane.`,
-        distractorAnalyses: {
-          1: `At C, the image is real, inverted, and equal in size to the object.`,
-          2: `Beyond C, the image is real, inverted, and diminished between C and F.`,
-          3: `At infinity, the image is formed at focus F as a highly diminished point size.`,
-        },
-        modelAnswer: `The object must be placed between the pole (P) and principal focus (F) so diverging reflected rays form a virtual, upright, magnified image behind the mirror.`,
-      });
-
-      // 4. Direct Recall Q4: Formula Distinction
-      generated.push({
-        id: `chk-${section.id}-rec-4`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `What is the standard Mirror Formula relating focal length (f), image distance (v), and object distance (u)?`,
-        choices: [
-          `1 / f = 1 / v + 1 / u`,
-          `1 / f = 1 / v - 1 / u`,
-          `f = v + u`,
-          `1 / f = (v * u) / (v + u)`,
-        ],
-        correctIndex: 0,
-        explanation: `The mirror formula is 1/f = 1/v + 1/u. Note that 1/f = 1/v - 1/u is the lens formula.`,
-        topicTag: 'Mirror Formula vs Lens Formula',
-        difficulty: 'Recall',
-        correctAnalysis: `The mirror formula features an addition between 1/v and 1/u. It relates reciprocal distances measured from the mirror pole.`,
-        distractorAnalyses: {
-          1: `Common Trap: 1/f = 1/v - 1/u is the LENS formula (refraction), not the mirror formula!`,
-          2: `Linear distance addition is mathematically invalid for reciprocal focal relations.`,
-          3: `Inverts the reciprocal equation (this would equal f, not 1/f).`,
-        },
-        modelAnswer: `1 / f = 1 / v + 1 / u relates focal length, image distance, and object distance for spherical mirrors.`,
-      });
-    } else {
-      // APPLIED REASONING
-      // 1. Applied Q1: Numerical mirror calculation
-      generated.push({
-        id: `chk-${section.id}-app-1`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `An object is placed 15 cm in front of a concave mirror of focal length 10 cm. What is the image distance (v) and its nature?`,
-        choices: [
-          `v = -30 cm; Real, inverted, and magnified (m = -2).`,
-          `v = +30 cm; Virtual, erect, and magnified (m = +2).`,
-          `v = -6 cm; Real, diminished, and inverted (m = -0.4).`,
-          `v = -15 cm; Real and identical size (m = -1).`,
-        ],
-        correctIndex: 0,
-        explanation: `Using 1/v = 1/f - 1/u = 1/(-10) - 1/(-15) = -1/10 + 1/15 = -1/30 ⇒ v = -30 cm. Since v is negative, image is real & inverted. m = -v/u = -(-30)/(-15) = -2.`,
-        topicTag: 'Mirror Equation Calculations',
-        difficulty: 'Application',
-        correctAnalysis: `Step 1: Assign signs: u = -15 cm, f = -10 cm (concave mirror).\nStep 2: 1/v = 1/f - 1/u = (-3 + 2)/30 = -1/30 ⇒ v = -30 cm.\nStep 3: Magnification m = -v/u = -(-30)/(-15) = -2 (real, inverted, 2x magnification).`,
-        distractorAnalyses: {
-          1: `Sign Trap: Treated concave mirror focal length as positive (+10 cm), mistakenly concluding the image is virtual.`,
-          2: `Formula Confusion: Used lens formula 1/f = 1/v - 1/u instead of mirror formula 1/f = 1/v + 1/u.`,
-          3: `Boundary Trap: Assumed object is positioned at the center of curvature (C = 20 cm, not 15 cm).`,
-        },
-        modelAnswer: `v = -30 cm. The image is real, inverted, and magnified with magnification m = -2.`,
-      });
-
-      // 2. Applied Q2: Convex automotive mirror
-      generated.push({
-        id: `chk-${section.id}-app-2`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `A rear-view convex mirror on an automobile has a radius of curvature of 3.00 m. If a bus is located 5.00 m from this mirror, where is the image formed?`,
-        choices: [
-          `+1.15 m behind the mirror; Virtual, erect, and diminished.`,
-          `-1.15 m in front of the mirror; Real and inverted.`,
-          `+0.85 m behind the mirror; Virtual and magnified.`,
-          `+1.50 m at the focal plane; Point sized.`,
-        ],
-        correctIndex: 0,
-        explanation: `R = +3.00 m ⇒ f = +1.50 m. u = -5.00 m. 1/v = 1/f - 1/u = 1/1.5 - 1/(-5) = 1/1.5 + 1/5 = 6.5/7.5 ⇒ v = +1.15 m behind mirror.`,
-        topicTag: 'Convex Mirror Ray Tracing',
-        difficulty: 'Application',
-        correctAnalysis: `Convex mirrors always produce virtual, erect, diminished images behind the mirror (v > 0). With f = +1.50 m and u = -5.00 m: 1/v = 1/1.5 + 1/5 = 13/15 ⇒ v = +1.15 m.`,
-        distractorAnalyses: {
-          1: `Physical Impossibility: Convex mirrors cannot produce real inverted images in front of the reflecting surface.`,
-          2: `Arithmetic Trap: Arithmetic inversion error during LCD calculation for 1/1.5 + 1/5.`,
-          3: `Infinity Misconception: Images form at the focal plane only when the bus is infinitely far away.`,
-        },
-        modelAnswer: `Image distance v = +1.15 m behind the mirror, forming a virtual, upright, diminished image.`,
-      });
-
-      // 3. Applied Q3: Practical design case
-      generated.push({
-        id: `chk-${section.id}-app-3`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `Why does a dentist rely specifically on a concave mirror rather than a convex mirror during oral examinations?`,
-        choices: [
-          `When held within its focal length (u < f), it generates an upright, magnified virtual image.`,
-          `Because concave mirrors inherently provide a wider field of view covering all oral cavity quadrants simultaneously.`,
-          `Because concave mirrors project real, inverted images directly onto oral cameras.`,
-          `Because convex mirrors absorb ambient light and cast heavy shadows inside the teeth.`,
-        ],
-        correctIndex: 0,
-        explanation: `Within focal distance (u < f), a concave mirror produces a magnified, upright virtual image, allowing precise inspection of cavities.`,
-        topicTag: 'Practical Applications of Optics',
-        difficulty: 'Application',
-        correctAnalysis: `When u < f, reflected rays diverge in front and form an enlarged upright virtual image behind the reflective surface, giving the dentist an enlarged view of microscopic enamel lesions.`,
-        distractorAnalyses: {
-          1: `Inverted Role: Wider field of view is a key trait of CONVEX mirrors (rear-view mirrors), not concave.`,
-          2: `Operational Trap: An inverted image would disorient surgical hand-eye coordination.`,
-          3: `Nonsense Distractor: Mirror surfaces reflect light rather than absorb illumination.`,
-        },
-        modelAnswer: `Held within its focal length (u < f), a concave mirror produces an erect, magnified virtual image, enabling clear cavity inspection.`,
-      });
-
-      // 4. Applied Q4: Ray distribution & boundary
-      generated.push({
-        id: `chk-${section.id}-app-4`,
-        quizId: `chk-${section.id}`,
-        type: isOpenResponse ? 'free_response' : 'multiple_choice',
-        questionText: `If the lower half of a concave mirror's reflecting surface is completely covered with an opaque black sheet, what happens to the resulting image?`,
-        choices: [
-          `The complete image is still formed, but its brightness (intensity) is reduced by half.`,
-          `Only the upper half of the object's image is rendered.`,
-          `The lower half of the image disappears completely from the focal plane.`,
-          `The image gets magnified by twice its original height.`,
-        ],
-        correctIndex: 0,
-        explanation: `Every small portion of the mirror forms a complete image. Covering half the mirror only halves the number of reflecting rays, reducing intensity without truncating the image.`,
-        topicTag: 'Wavefront & Ray Distribution',
-        difficulty: 'Application',
-        correctAnalysis: `Rays from every single coordinate of the object strike all zones of the mirror. The unblocked upper half still gathers light from the complete object, focusing it into an intact image with 50% luminosity.`,
-        distractorAnalyses: {
-          1: `Classic Exam Trap: Mistakenly assuming geometric clipping occurs (it doesn't; luminosity drops instead).`,
-          2: `Identical Fallacy: Covering half the mirror aperture does not delete half the image.`,
-          3: `Geometrical Invariance: Covering mirror zones has zero effect on curvature radius R or focal length f.`,
-        },
-        modelAnswer: `A complete image is still formed, but its brightness/intensity is halved because fewer reflected rays contribute to the focus.`,
-      });
+    // Check if activeMilestone already has questions attached in storage/state
+    const existing = extractMilestoneQuestions(
+      milestone,
+      drillConfig.cognitiveDepth === 'direct_recall' ? 'Direct Recall' : 'Applied Reasoning'
+    );
+    if (existing.length > 0) {
+      setLoadedQuestions(existing);
+      setIsLoadingQuestions(false);
+      return;
     }
 
-    return generated.slice(0, drillConfig.questionCount);
-  }, [section, drillConfig]);
+    // activeMilestone.questions is empty: Trigger fetch to /api/check-learning/generate
+    let isCancelled = false;
+    setIsLoadingQuestions(true);
+    setLoadError(null);
+
+    const topics =
+      (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics.length > 0 && (milestone as any).coreTopics) ||
+      (Array.isArray(milestone.keyTopics) && milestone.keyTopics.length > 0 && milestone.keyTopics) ||
+      [milestone.title || 'Core Principles'];
+
+    const textExcerpt = resolveMilestoneTextExcerpt();
+    const endpoint =
+      textExcerpt && textExcerpt.trim().length >= 150
+        ? '/api/questions/generate-grounded'
+        : '/api/check-learning/generate';
+
+    const fetchGroundedWithFallback = async () => {
+      let res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: milestone.id,
+          milestoneId: milestone.id,
+          title: milestone.title,
+          milestoneTitle: milestone.title,
+          topics,
+          topicTags: topics,
+          coreTopics: topics,
+          textExcerpt,
+          sectionTextExcerpt: textExcerpt,
+          chapterTitle: chapterName,
+          chapterName,
+          questionCount: drillConfig.questionCount || 4,
+        }),
+      });
+
+      if (!res.ok && endpoint === '/api/questions/generate-grounded') {
+        res = await fetch('/api/check-learning/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: milestone.id,
+            milestoneId: milestone.id,
+            title: milestone.title,
+            milestoneTitle: milestone.title,
+            topics,
+            topicTags: topics,
+            coreTopics: topics,
+            textExcerpt,
+            sectionTextExcerpt: textExcerpt,
+            chapterTitle: chapterName,
+            chapterName,
+            questionCount: drillConfig.questionCount || 4,
+          }),
+        });
+      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+
+    fetchGroundedWithFallback()
+      .then((data) => {
+        if (isCancelled) return;
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          // Cache directly on milestone and in localStorage
+          milestone.checkLearningQuestions = data.questions;
+          milestone.sectionTextExcerpt = textExcerpt;
+          try {
+            localStorage.setItem(`milestone_questions_${milestone.id}`, JSON.stringify(data.questions));
+          } catch {
+            // ignore
+          }
+          onSaveMilestoneQuestions?.(milestone.id, data.questions);
+
+          const parsed = extractMilestoneQuestions({
+            ...milestone,
+            questions: data.questions,
+            checkLearningQuestions: data.questions,
+          });
+          setLoadedQuestions(parsed);
+        } else if (Array.isArray(data.content?.checkLearning) && data.content.checkLearning.length > 0) {
+          const parsed = extractMilestoneQuestions({
+            ...milestone,
+            checkLearning: data.content.checkLearning,
+          });
+          setLoadedQuestions(parsed);
+        } else {
+          setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+        }
+        setIsLoadingQuestions(false);
+      })
+      .catch((err) => {
+        if (isCancelled) return;
+        console.warn('[CheckLearning] Question fetch failed, using dynamic topic fallback:', err);
+        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+        setIsLoadingQuestions(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, milestone?.id, milestone?.title, chapterName, resolveMilestoneTextExcerpt]);
+
+  // Reset / Regenerate Questions handler
+  // Clears milestone.checkLearningQuestions for this milestone and re-triggers generation with current document text chunk
+  const handleRegenerateQuestions = async () => {
+    if (!milestone || isRegenerating || isLoadingQuestions) return;
+
+    // 1. Clear milestone.checkLearningQuestions in state & persistent storage
+    milestone.checkLearningQuestions = undefined;
+    delete (milestone as any).checkLearningQuestions;
+    try {
+      localStorage.removeItem(`milestone_questions_${milestone.id}`);
+    } catch {
+      // ignore
+    }
+
+    // 2. Reset runner state
+    setCurrentIndex(0);
+    setSelectedAnswers({});
+    setFreeResponses({});
+    setFreeResponseEvaluated({});
+    setSkippedQuestions({});
+    setInputModes({});
+    setSolveViaDerivation({});
+    setUploadedImages({});
+    setEvaluations({});
+    setElapsedSec(0);
+    setIsEvaluating(false);
+    setEvalError(null);
+    setLoadError(null);
+
+    // 3. Re-trigger generation with current document text chunk
+    setIsRegenerating(true);
+    setIsLoadingQuestions(true);
+
+    const topics =
+      (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics.length > 0 && (milestone as any).coreTopics) ||
+      (Array.isArray(milestone.keyTopics) && milestone.keyTopics.length > 0 && milestone.keyTopics) ||
+      [milestone.title || 'Core Principles'];
+
+    const textExcerpt = resolveMilestoneTextExcerpt();
+    const endpoint =
+      textExcerpt && textExcerpt.trim().length >= 150
+        ? '/api/questions/generate-grounded'
+        : '/api/check-learning/generate';
+
+    try {
+      let res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chapterTitle: chapterName,
+          milestoneTitle: milestone.title,
+          topicTags: topics,
+          sectionTextExcerpt: textExcerpt,
+          questionCount: drillConfig.questionCount || 4,
+        }),
+      });
+
+      if (!res.ok && endpoint === '/api/questions/generate-grounded') {
+        res = await fetch('/api/check-learning/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chapterTitle: chapterName,
+            milestoneTitle: milestone.title,
+            topicTags: topics,
+            sectionTextExcerpt: textExcerpt,
+            questionCount: drillConfig.questionCount || 4,
+          }),
+        });
+      }
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (Array.isArray(data.questions) && data.questions.length > 0) {
+        // Save freshly generated questions directly to milestone.checkLearningQuestions
+        milestone.checkLearningQuestions = data.questions;
+        milestone.sectionTextExcerpt = textExcerpt;
+        try {
+          localStorage.setItem(`milestone_questions_${milestone.id}`, JSON.stringify(data.questions));
+        } catch {
+          // ignore
+        }
+        onSaveMilestoneQuestions?.(milestone.id, data.questions);
+
+        const parsed = extractMilestoneQuestions({
+          ...milestone,
+          questions: data.questions,
+          checkLearningQuestions: data.questions,
+        });
+        setLoadedQuestions(parsed);
+      } else {
+        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+      }
+    } catch (err: any) {
+      console.warn('[CheckLearning] Regenerate questions failed, fallback loaded:', err);
+      setLoadError(err?.message || 'Failed to regenerate questions. Loaded fallback questions.');
+      setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+    } finally {
+      setIsRegenerating(false);
+      setIsLoadingQuestions(false);
+    }
+  };
+
+  // Dynamic question state filtered by drillConfig
+  const questions: EnrichedQuizQuestion[] = useMemo(() => {
+    let list = loadedQuestions;
+    if (list.length === 0 && milestone) {
+      list = extractMilestoneQuestions(milestone);
+    }
+    if (list.length === 0) return [];
+
+    const isOpenResponse = drillConfig.format === 'open_response';
+    const isDirectRecall = drillConfig.cognitiveDepth === 'direct_recall';
+
+    return list.slice(0, drillConfig.questionCount).map((q) => ({
+      ...q,
+      type: isOpenResponse ? ('free_response' as const) : q.type,
+      difficulty: q.difficulty || (isDirectRecall ? 'Direct Recall' : 'Applied Reasoning'),
+    }));
+  }, [loadedQuestions, milestone, drillConfig]);
 
   // Current question helpers
   const currentQ = questions[currentIndex] || questions[0];
+  const currentQuestion = currentQ;
   const userChoice = selectedAnswers[currentIndex];
   const isAnswered = userChoice !== undefined;
   const isCorrect = isAnswered && userChoice === currentQ?.correctIndex;
@@ -502,7 +766,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
       return;
     }
     if ((mode === 'type' || mode === 'speak') && !currentText) {
-      setEvalError('Please provide your derivation or physical explanation before evaluating.');
+      setEvalError('Please provide your derivation or explanation before evaluating.');
       return;
     }
 
@@ -574,7 +838,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
     setFinalTimeSec(elapsedSec);
     setStep('diagnostic');
 
-    onDrillComplete?.(section.id, score, elapsedSec);
+    onDrillComplete?.(milestone?.id || section?.id || "", score, elapsedSec);
 
     if (score >= 75) {
       try {
@@ -638,12 +902,72 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-150"
     >
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden relative">
+        {/* Loading / Generating State */}
+        {isLoadingQuestions && (
+          <div
+            id="questions-loading-state"
+            className="flex flex-col items-center justify-center p-12 sm:p-16 min-h-[380px] text-center space-y-5"
+          >
+            <div className="relative">
+              <div className="w-16 h-16 rounded-3xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center shadow-lg">
+                <Sparkles className="w-8 h-8 text-emerald-600 dark:text-emerald-400 animate-spin" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow">
+                <Brain className="w-3.5 h-3.5 animate-pulse" />
+              </div>
+            </div>
+
+            <div className="space-y-2 max-w-md">
+              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                Crafting validation questions from your chapter notes...
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Grounding validation questions, distractor traps, and applied reasoning directly in{' '}
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  {milestone?.title || chapterName}
+                </span>.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-4 py-2 rounded-full border border-emerald-200 dark:border-emerald-800/80 shadow-2xs">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600 dark:text-emerald-400" />
+              <span>Grounded in your notes & topics</span>
+            </div>
+          </div>
+        )}
+
+        {/* Empty State when finished loading but no questions */}
+        {!isLoadingQuestions && questions.length === 0 && (
+          <div
+            id="questions-empty-state"
+            className="flex flex-col items-center justify-center p-12 text-center space-y-4 min-h-[320px]"
+          >
+            <AlertTriangle className="w-10 h-10 text-amber-500" />
+            <div className="space-y-1 max-w-sm">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                No validation questions available
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Could not retrieve questions for {milestone?.title || 'this milestone'}. You can retry generation below.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+              }}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+            >
+              Generate Instant Topic Drill
+            </button>
+          </div>
+        )}
         {/* ================================================================= */}
         {/* 1. CONFIGURATION MODAL */}
         {/* ================================================================= */}
-        {step === 'config' && (
+        {!isLoadingQuestions && questions.length > 0 && step === 'config' && (
           <CheckLearningConfigModal
-            section={section}
+            section={milestone || section}
             chapterName={chapterName}
             isOpen={true}
             initialConfig={drillConfig}
@@ -655,7 +979,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
         {/* ================================================================= */}
         {/* 2. ACTIVE CHALLENGE RUNNER */}
         {/* ================================================================= */}
-        {step === 'runner' && (
+        {!isLoadingQuestions && questions.length > 0 && step === 'runner' && (
           <div id="active-challenge-runner" className="flex flex-col h-full max-h-[92vh]">
             {/* ------------------------------------------------------------- */}
             {/* Header: Live session timer, "Question X of Y", toggle [Practice Mode] vs [Exam Mode] */}
@@ -715,6 +1039,19 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
                   Question {currentIndex + 1} of {questions.length}
                 </span>
 
+                {/* Reset / Regenerate Questions icon button */}
+                <button
+                  id="runner-regenerate-btn"
+                  type="button"
+                  onClick={handleRegenerateQuestions}
+                  disabled={isRegenerating || isLoadingQuestions}
+                  className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 border border-slate-200 dark:border-slate-700 hover:border-emerald-300 dark:hover:border-emerald-700 text-slate-600 hover:text-emerald-700 dark:text-slate-300 dark:hover:text-emerald-300 transition cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-2xs disabled:opacity-50 disabled:cursor-wait"
+                  title="Reset / Regenerate Questions from current document text"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin text-emerald-600' : 'text-slate-500'}`} />
+                  <span className="hidden sm:inline">Regenerate</span>
+                </button>
+
                 {/* Close to Roadmap */}
                 <button
                   id="runner-close-btn"
@@ -742,19 +1079,48 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
             <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-6">
               {/* Question metadata badge */}
               <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
-                <span className="px-2.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                  {currentQ.topicTag}
+                {/* Topic Pill (top left): Render currentQuestion.topicTag or activeMilestone.coreTopics[0] */}
+                <span
+                  id="topic-pill"
+                  className="px-2.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold"
+                >
+                  {currentQuestion?.topicTag || (milestone as any)?.coreTopics?.[0] || milestone?.keyTopics?.[0] || milestone?.title || 'Core Principles'}
                 </span>
                 <span>•</span>
-                <span className="text-emerald-600 dark:text-emerald-400 font-black">
-                  {drillConfig.cognitiveDepth === 'direct_recall' ? 'Direct Recall' : 'Applied Reasoning'}
+                {/* Difficulty Pill: Render currentQuestion.difficulty (e.g., "Applied Reasoning") */}
+                <span
+                  id="difficulty-pill"
+                  className="text-emerald-600 dark:text-emerald-400 font-black px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800"
+                >
+                  {currentQuestion?.difficulty || (drillConfig.cognitiveDepth === 'direct_recall' ? 'Direct Recall' : 'Applied Reasoning')}
                 </span>
               </div>
 
-              {/* Question text */}
-              <div className="text-base sm:text-xl font-bold text-slate-900 dark:text-white leading-relaxed">
-                {currentQ.questionText}
+              {/* Question Title: Render currentQuestion.questionText */}
+              <div
+                id="question-title"
+                className="text-base sm:text-xl font-bold text-slate-900 dark:text-white leading-relaxed"
+              >
+                {currentQuestion?.questionText}
               </div>
+
+              {/* Verbatim Grounded Anchor Quote Banner */}
+              {currentQuestion?.sourceAnchorQuote && (
+                <div
+                  id="source-anchor-quote-banner"
+                  className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-300"
+                >
+                  <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider text-[10px] block">
+                      Verbatim Text Anchor Quote
+                    </span>
+                    <p className="italic font-serif leading-relaxed text-slate-700 dark:text-slate-200">
+                      "{currentQuestion.sourceAnchorQuote}"
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Derivation or MCQ Toggle Header for Multiple Choice questions */}
               {currentQ.type === 'multiple_choice' && (
@@ -860,11 +1226,11 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
                         onChange={(e) =>
                           setFreeResponses((prev) => ({ ...prev, [currentIndex]: e.target.value }))
                         }
-                        placeholder="Type your derivation or physical explanation..."
+                        placeholder={getAnswerTextareaPlaceholder(subjectName)}
                         className="w-full p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 resize-none transition"
                       />
                       <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                        <span>Include governing formulas, sign conventions, and final values.</span>
+                        <span>Explain your reasoning, step-by-step working, and core concepts.</span>
                         <span className="font-mono">{(freeResponses[currentIndex] || '').length} chars</span>
                       </div>
                     </div>
@@ -998,7 +1364,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
                               Write on Paper & Snap Photo
                             </h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                              Work out equations, ray diagrams, or derivations on notebook paper. Gemini 2.5 Flash will transcribe and evaluate your work.
+                              Work out equations, diagrams, or reasoning on notebook paper. AI will transcribe and evaluate your work.
                             </p>
                           </div>
 
@@ -1123,7 +1489,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
 
                       {isEvaluating && (
                         <span className="text-xs text-slate-500 dark:text-slate-400 animate-pulse">
-                          Gemini 2.5 Flash is inspecting steps and cross-checking physical formulas...
+                          AI is inspecting steps and cross-checking core principles...
                         </span>
                       )}
 
@@ -1227,7 +1593,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
                       )}
 
                       {/* Official Reference Model Answer */}
-                      <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 space-y-2">
+                      <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 space-y-2.5">
                         <div className="text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center justify-between">
                           <span>Reference Model Answer</span>
                           <span className="text-[10px] text-emerald-600/80 font-normal">
@@ -1237,6 +1603,18 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
                         <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-sans">
                           {currentQ.modelAnswer || currentQ.explanation}
                         </p>
+                        {currentQ.keyScoringPoints && currentQ.keyScoringPoints.length > 0 && (
+                          <div className="pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80 space-y-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">
+                              Key Scoring Criteria (Required for Full Credit):
+                            </span>
+                            <ul className="list-disc pl-4 space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                              {currentQ.keyScoringPoints.map((pt, pIdx) => (
+                                <li key={pIdx}>{pt}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1411,9 +1789,9 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
         {/* ================================================================= */}
         {step === 'diagnostic' && (
           <PerformanceDiagnosticView
-            section={section}
+            section={milestone || section}
             chapterName={chapterName}
-            questions={questions}
+            questions={questions as any}
             selectedAnswers={selectedAnswers}
             freeResponseEvaluated={freeResponseEvaluated}
             skippedQuestions={skippedQuestions}
@@ -1433,7 +1811,7 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
         {/* ================================================================= */}
         <ConceptDeconstructionDrawer
           isOpen={isDeconstructionOpen}
-          question={inspectQuestion}
+          question={inspectQuestion as any}
           selectedAnswerIndex={inspectSelectedAnswer}
           onClose={() => setIsDeconstructionOpen(false)}
         />

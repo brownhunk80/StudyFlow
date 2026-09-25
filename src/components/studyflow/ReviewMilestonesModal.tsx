@@ -201,7 +201,7 @@ export const ReviewMilestonesModal: React.FC<ReviewMilestonesModalProps> = ({
                 Review Extracted Curriculum
               </h2>
               <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                {milestones.length} Milestones Detected
+                {milestones.length} Sections Detected
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -267,7 +267,7 @@ export const ReviewMilestonesModal: React.FC<ReviewMilestonesModalProps> = ({
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5">
                   <Plus className="w-3.5 h-3.5" />
-                  Add Custom Curriculum Milestone
+                  Add Custom Curriculum Section
                 </h4>
                 <button
                   type="button"
@@ -359,7 +359,7 @@ export const ReviewMilestonesModal: React.FC<ReviewMilestonesModalProps> = ({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
                       <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                        Editing Milestone {idx + 1}
+                        Editing Section {idx + 1}
                       </span>
                       <div className="flex items-center gap-1">
                         <button
@@ -470,7 +470,7 @@ export const ReviewMilestonesModal: React.FC<ReviewMilestonesModalProps> = ({
                           type="button"
                           onClick={() => removeMilestone(idx)}
                           className="p-1.5 text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                          title="Remove Milestone"
+                          title="Remove Section"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

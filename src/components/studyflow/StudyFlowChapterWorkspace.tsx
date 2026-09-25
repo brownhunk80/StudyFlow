@@ -32,6 +32,9 @@ import {
 } from '../../types';
 import { migrateChapterToLearnDocument } from '../../utils/learnDocumentMigration';
 import { RoadmapMilestoneCard } from './RoadmapMilestoneCard';
+import { MilestoneReaderView } from './MilestoneReaderView';
+import { MilestoneCheckpointsRunner } from './MilestoneCheckpointsRunner';
+import { MilestoneRecallDeckRunner } from './MilestoneRecallDeckRunner';
 import { SummaryReaderModal } from './SummaryReaderModal';
 import { CheckLearningDrillModal } from './CheckLearningDrillModal';
 import { FullScreenFlashcardStudy } from './FullScreenFlashcardStudy';
@@ -81,6 +84,10 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
 
   // Local reactive sections state bound strictly to current chapter ID
   const [sections, setSections] = useState<Section[]>(currentMilestones);
+  const sectionsRef = React.useRef(sections);
+  useEffect(() => {
+    sectionsRef.current = sections;
+  }, [sections]);
 
   // Sync sections whenever chapter.id or currentMilestones updates
   useEffect(() => {
@@ -98,6 +105,10 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   const [summaryModalSection, setSummaryModalSection] = useState<Section | null>(null);
   const [quizModalSection, setQuizModalSection] = useState<{ section: Section; mode: 'study' | 'test' } | null>(null);
   const [flashcardsModalSection, setFlashcardsModalSection] = useState<{ section: Section; mode: 'practice' | 'edit' } | null>(null);
+  // Three distinct sequential modules runners
+  const [readerMilestone, setReaderMilestone] = useState<Section | null>(null);
+  const [checkpointsMilestone, setCheckpointsMilestone] = useState<Section | null>(null);
+  const [recallDeckMilestone, setRecallDeckMilestone] = useState<Section | null>(null);
   const [isDocumentReaderOpen, setIsDocumentReaderOpen] = useState(false);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
@@ -215,16 +226,14 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           quizzes: [newQuiz],
         };
 
-        setSections((prev) => {
-          const next = prev.map((s) => (s.id === sec.id ? updatedSection : s));
-          onUpdateChapterSections?.(chapter.id, next, exam?.id);
-          try {
-            localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(next));
-          } catch {
-            // ignore
-          }
-          return next;
-        });
+        const next = (sectionsRef.current || []).map((s) => (s.id === sec.id ? updatedSection : s));
+        setSections(next);
+        onUpdateChapterSections?.(chapter.id, next, exam?.id);
+        try {
+          localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
 
         return updatedSection;
       }
@@ -238,56 +247,201 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
 
   // Handle section expansion toggle & pre-fetch details in background
   const handleToggleExpand = (sectionId: string) => {
-    setExpandedSectionId((prev) => {
-      const nextId = prev === sectionId ? null : sectionId;
-      if (nextId) {
-        const target = sections.find((s) => s.id === nextId);
-        if (target) {
-          ensureSectionContent(target);
+    const nextId = expandedSectionId === sectionId ? null : sectionId;
+    setExpandedSectionId(nextId);
+    if (nextId) {
+      const target = (sectionsRef.current || []).find((s) => s.id === nextId);
+      if (target) {
+        ensureSectionContent(target);
+      }
+    }
+  };
+
+  // Helper to compute a milestone's Checkpoints score (0 - 100)
+  const getMilestoneCheckpointsScore = (sectionId: string): number => {
+    try {
+      const saved = localStorage.getItem(`milestone_checkpoints_${sectionId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const understood = parsed.filter((c: any) => c.selfAssessment === 'understood').length;
+          return Math.round((understood / parsed.length) * 100);
         }
       }
-      return nextId;
-    });
+    } catch {}
+    const sec = sections.find((s) => s.id === sectionId);
+    if (sec && sec.knowledgeQuestions && sec.knowledgeQuestions.length > 0) {
+      const understood = sec.knowledgeQuestions.filter((kq) => kq.isCorrect === true).length;
+      return Math.round((understood / sec.knowledgeQuestions.length) * 100);
+    }
+    return sec && sec.completionRate >= 80 ? 100 : sec && sec.completionRate >= 45 ? 60 : 0;
+  };
+
+  // Helper to compute a milestone's Recall Deck score (0 - 100)
+  const getMilestoneRecallScore = (sectionId: string): number => {
+    try {
+      const saved = localStorage.getItem(`milestone_recall_deck_${sectionId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const active = parsed.filter((c: any) => c.status !== 'disabled');
+          const mature = active.filter(
+            (c: any) => c.interval >= 3 || c.repetition >= 2 || c.status === 'mastered'
+          ).length;
+          const understood = active.filter((c: any) => c.lastRating === 'understood').length;
+          return active.length > 0
+            ? Math.min(100, Math.round(((mature + understood * 0.5) / active.length) * 100))
+            : 0;
+        }
+      }
+    } catch {}
+    const sec = sections.find((s) => s.id === sectionId);
+    return sec?.completionRate || 40;
+  };
+
+  // Helper to compute overall milestone mastery index: (CheckpointsScore * 0.4) + (RecallDeckScore * 0.6)
+  const computeMilestoneMasteryIndex = (sectionId: string): number => {
+    const cpScore = getMilestoneCheckpointsScore(sectionId);
+    const recallScore = getMilestoneRecallScore(sectionId);
+    return Math.min(100, Math.round(cpScore * 0.4 + recallScore * 0.6));
   };
 
   // Card & Sub-action handlers with on-demand content resolution
-  const handleOpenFlashcards = async (section: Section, mode: 'practice' | 'edit') => {
+  const handleOpenFlashcards = async (section: Section, _mode: 'practice' | 'edit' = 'practice') => {
     const readySection = await ensureSectionContent(section);
-    setFlashcardsModalSection({ section: readySection, mode });
+    setRecallDeckMilestone(readySection);
   };
 
-  const handleOpenQuiz = async (section: Section, mode: 'study' | 'test') => {
+  const handleOpenQuiz = async (section: Section, _mode: 'study' | 'test' = 'study') => {
     const readySection = await ensureSectionContent(section);
-    setQuizModalSection({ section: readySection, mode });
+    setCheckpointsMilestone(readySection);
   };
 
   const handleRead = async (section: Section) => {
     const readySection = await ensureSectionContent(section);
-    setReadingSection(readySection);
+    setReaderMilestone(readySection);
   };
 
   const handleReadSummary = async (section: Section) => {
     const readySection = await ensureSectionContent(section);
-    setReadingSection(readySection);
+    setReaderMilestone(readySection);
   };
 
   const handleReadDocument = (_section: Section) => {
     setIsDocumentReaderOpen(true);
   };
 
+  // Mark Module 1 (Concept Notes) as Read
+  const handleMarkSummaryRead = (sectionId: string) => {
+    try {
+      localStorage.setItem(`milestone_read_${sectionId}`, 'true');
+    } catch {}
+    const updated = sections.map((sec) => {
+      if (sec.id === sectionId) {
+        const newScore = computeMilestoneMasteryIndex(sectionId);
+        return {
+          ...sec,
+          completionRate: Math.max(sec.completionRate, newScore),
+          summaryRead: true,
+        };
+      }
+      return sec;
+    });
+    setSections(updated);
+    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+  };
+
+  // Save Module 2 (Checkpoints) responses and Understood score (40% weight)
+  const handleSaveCheckpoints = (sectionId: string, checkpoints: any[], scorePct: number) => {
+    try {
+      localStorage.setItem(`milestone_checkpoints_${sectionId}`, JSON.stringify(checkpoints));
+    } catch {}
+    const recallScore = getMilestoneRecallScore(sectionId);
+    const newMasteryIndex = Math.min(100, Math.round(scorePct * 0.4 + recallScore * 0.6));
+
+    const updated = sections.map((sec) => {
+      if (sec.id === sectionId) {
+        return {
+          ...sec,
+          completionRate: newMasteryIndex,
+          knowledgeQuestions: checkpoints.map((cp) => ({
+            id: cp.id,
+            sectionId,
+            question: cp.prompt,
+            sampleAnswer: cp.benchmarkAnswer,
+            userResponse: cp.userResponse,
+            isCorrect:
+              cp.selfAssessment === 'understood'
+                ? true
+                : cp.selfAssessment === 'needs_work'
+                ? false
+                : null,
+          })),
+        };
+      }
+      return sec;
+    });
+    setSections(updated);
+    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+
+    if (onUpdateChapterStatus) {
+      onUpdateChapterStatus(
+        chapter.id,
+        newMasteryIndex >= 80 ? 'mastered' : newMasteryIndex >= 60 ? 'ready' : 'needs_practice',
+        newMasteryIndex,
+        exam?.id
+      );
+    }
+  };
+
+  // Save Module 3 (Recall Deck) RemNote cards and SM-2 maturity (60% weight)
+  const handleUpdateRecallCards = (sectionId: string, updatedCards: any[], recallScorePct: number) => {
+    try {
+      localStorage.setItem(`milestone_recall_deck_${sectionId}`, JSON.stringify(updatedCards));
+      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(sections));
+    } catch {}
+    const cpScore = getMilestoneCheckpointsScore(sectionId);
+    const newMasteryIndex = Math.min(100, Math.round(cpScore * 0.4 + recallScorePct * 0.6));
+
+    const updated = sections.map((sec) => {
+      if (sec.id === sectionId) {
+        return {
+          ...sec,
+          flashcards: updatedCards,
+          recallDeck: updatedCards,
+          completionRate: newMasteryIndex,
+        };
+      }
+      return sec;
+    });
+    setSections(updated);
+    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+
+    if (onUpdateChapterStatus) {
+      onUpdateChapterStatus(
+        chapter.id,
+        newMasteryIndex >= 80 ? 'mastered' : newMasteryIndex >= 60 ? 'ready' : 'needs_practice',
+        newMasteryIndex,
+        exam?.id
+      );
+    }
+  };
+
   // Handle concept skip toggle
   const handleToggleConceptSkip = (sectionId: string, _conceptId: string, isSkipped: boolean) => {
-    setSections((prev) =>
-      prev.map((sec) => {
-        if (sec.id === sectionId) {
-          return {
-            ...sec,
-            completionRate: isSkipped ? Math.max(0, sec.completionRate - 10) : Math.min(100, sec.completionRate + 10),
-          };
-        }
-        return sec;
-      })
-    );
+    const updated = (sectionsRef.current || []).map((sec) => {
+      if (sec.id === sectionId) {
+        return {
+          ...sec,
+          completionRate: isSkipped
+            ? Math.max(0, sec.completionRate - 10)
+            : Math.min(100, sec.completionRate + 10),
+        };
+      }
+      return sec;
+    });
+    setSections(updated);
+    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
   };
 
   // Handle concept status toggle
@@ -296,15 +450,18 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     _conceptId: string,
     newStatus: 'not_started' | 'learning' | 'mastered'
   ) => {
-    setSections((prev) =>
-      prev.map((sec) => {
-        if (sec.id === sectionId) {
-          const newCompletion = newStatus === 'mastered' ? Math.min(100, sec.completionRate + 25) : Math.max(20, sec.completionRate - 20);
-          return { ...sec, completionRate: newCompletion };
-        }
-        return sec;
-      })
-    );
+    const updated = (sectionsRef.current || []).map((sec) => {
+      if (sec.id === sectionId) {
+        const newCompletion =
+          newStatus === 'mastered'
+            ? Math.min(100, sec.completionRate + 25)
+            : Math.max(20, sec.completionRate - 20);
+        return { ...sec, completionRate: newCompletion };
+      }
+      return sec;
+    });
+    setSections(updated);
+    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
   };
 
   // When a quiz is completed
@@ -336,7 +493,6 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     setSections(updatedSections);
     onUpdateChapterSections?.(chapter.id, updatedSections, exam?.id);
 
-    // Update global chapter status if score is high
     if (onUpdateChapterStatus) {
       const overallMastery = Math.min(100, Math.max(chapter.masteryPercentage || 0, score));
       onUpdateChapterStatus(
@@ -349,16 +505,25 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   };
 
   // When cards are updated
-  const handleUpdateCards = (sectionId: string, updatedCards: DocumentFlashcard[]) => {
-    const updated = sections.map((sec) => (sec.id === sectionId ? { ...sec, flashcards: updatedCards } : sec));
+  const handleUpdateCards = (sectionId: string, updatedCards: any[]) => {
+    const updated = sections.map((sec) =>
+      sec.id === sectionId ? { ...sec, flashcards: updatedCards, recallDeck: updatedCards } : sec
+    );
     setSections(updated);
     onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+    try {
+      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+      localStorage.setItem(`recall_deck_${sectionId}`, JSON.stringify(updatedCards));
+    } catch {}
   };
 
-  // Overall progress
+  // Overall progress based on milestone mastery index formula: (CheckpointsScore * 0.4) + (RecallDeckScore * 0.6)
   const overallProgress = useMemo(() => {
     if (sections.length === 0) return 0;
-    return Math.round(sections.reduce((acc, s) => acc + s.completionRate, 0) / sections.length);
+    const totalMastery = sections.reduce((acc, s) => {
+      return acc + computeMilestoneMasteryIndex(s.id);
+    }, 0);
+    return Math.round(totalMastery / sections.length);
   }, [sections]);
 
   // AI Pipeline: Extract Milestones & Build Roadmap (Phase A: Fast Outline Discovery)
@@ -675,7 +840,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                 </span>
                 <span className="text-slate-300 dark:text-slate-700">•</span>
                 <span className="text-xs font-bold text-slate-500">
-                  {sections.length > 0 ? `${sections.length} Modular Milestones` : 'Unprocessed Roadmap'}
+                  {sections.length > 0 ? `${sections.length} Curriculum Sections` : 'Unprocessed Sections'}
                 </span>
               </div>
               <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
@@ -700,7 +865,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           {/* Attached Document Chip, Visual Document Sync Badge & Quick Actions */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Visual Document Sync Badge: "Source: [Attached Document Name] • [X] Milestones Extracted" */}
+              {/* Visual Document Sync Badge */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 shadow-2xs">
                 <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 <span className="font-semibold text-slate-500 dark:text-slate-400">Source:</span>
@@ -709,7 +874,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                 </span>
                 <span className="text-slate-300 dark:text-slate-600">•</span>
                 <span className="font-bold text-indigo-600 dark:text-indigo-400">
-                  {sections.length} Milestones Extracted
+                  {sections.length} Sections Extracted
                 </span>
                 {chapter.pageCount && (
                   <span className="text-slate-400 font-normal">
@@ -753,17 +918,17 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
               </div>
             </div>
 
-            {/* Re-extract / Overwrite Milestones Button */}
+            {/* Re-extract / Overwrite Sections Button */}
             <div className="flex items-center gap-2">
               {hasDocument && (
                 <button
                   onClick={() => handleExtractMilestones(true)}
                   disabled={isExtractingMilestones}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:hover:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800/80 transition cursor-pointer disabled:opacity-50 shadow-2xs"
-                  title="Re-run AI extraction and overwrite current milestones with new analysis from the document"
+                  title="Re-run AI extraction and overwrite current sections with new analysis from the document"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isExtractingMilestones ? 'animate-spin' : ''}`} />
-                  <span>{sections.length > 0 ? 'Re-extract / Overwrite Milestones' : 'Extract Milestones'}</span>
+                  <span>{sections.length > 0 ? 'Re-extract / Overwrite Sections' : 'Extract Sections'}</span>
                 </button>
               )}
               {!hasDocument && (
@@ -788,12 +953,12 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             <div>
               <h2 className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                 <Compass className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Curriculum Milestones & Knowledge Nodes</span>
+                <span>Chapter Curriculum Sections</span>
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 {sections.length > 0
-                  ? 'Work through each vertical milestone to check your learning and reinforce spaced recall.'
-                  : 'Milestones will be generated exclusively from your source document.'}
+                  ? 'Work through each sequential section to master notes, derivations, and active recall.'
+                  : 'Sections will be generated exclusively from your source document.'}
               </p>
             </div>
 
@@ -816,7 +981,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                     Deconstructing Chapter Document
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Gemini is reading "{chapter.documentName || chapter.name}" to generate your curriculum milestones.
+                    Gemini is reading "{chapter.documentName || chapter.name}" to generate your curriculum sections.
                   </p>
                 </div>
               </div>
@@ -986,6 +1151,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                   key={section.id}
                   section={section}
                   chapterName={chapter.name}
+                  chapterRawText={chapter.rawText || (chapter as any).documentText}
                   index={idx}
                   totalSections={sections.length}
                   isExpanded={expandedSectionId === section.id}
@@ -993,9 +1159,24 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                   onToggleExpand={() => handleToggleExpand(section.id)}
                   onOpenFlashcards={handleOpenFlashcards}
                   onOpenQuiz={handleOpenQuiz}
+                  onSaveMilestoneQuestions={(secId, qList) => {
+                    const updated = sections.map((s) =>
+                      s.id === secId ? { ...s, checkLearningQuestions: qList } : s
+                    );
+                    setSections(updated);
+                    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+                    try {
+                      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+                    } catch {}
+                  }}
+                  onSaveMilestoneCards={(secId, cList) => {
+                    handleUpdateCards(secId, cList);
+                  }}
                   onRead={handleRead}
                   onReadSummary={handleReadSummary}
                   onReadDocument={handleReadDocument}
+                  onOpenCheckpoints={handleOpenQuiz}
+                  onLaunchRecallDeck={handleOpenFlashcards}
                   onToggleConceptSkip={handleToggleConceptSkip}
                   onToggleConceptStatus={handleToggleConceptStatus}
                 />
@@ -1012,10 +1193,10 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
 
               <div className="max-w-md mx-auto space-y-2">
                 <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
-                  No Milestones Generated Yet
+                  No Sections Generated Yet
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                  No milestones generated yet. Upload a document and click 'Extract Milestones' to build your roadmap for this chapter.
+                  No sections generated yet. Upload a document and click 'Extract Sections' to build your curriculum for this chapter.
                 </p>
               </div>
 
@@ -1046,7 +1227,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                       className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-lg shadow-indigo-600/25 transition cursor-pointer"
                     >
                       <Sparkles className="w-4 h-4" />
-                      <span>Extract Milestones</span>
+                      <span>Extract Sections</span>
                     </button>
                     <button
                       onClick={() => setIsAttachModalOpen(true)}
@@ -1083,7 +1264,63 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
       </div>
 
       {/* =================================================================== */}
-      {/* INTERACTIVE MODALS */}
+      {/* 3 SEQUENTIAL MILESTONE MODULE RUNNERS */}
+      {/* =================================================================== */}
+      {/* Module 1: Clean Reader View (Concept Notes) */}
+      {readerMilestone && (
+        <MilestoneReaderView
+          section={readerMilestone}
+          chapterName={chapter.name}
+          subjectName={subject?.name || 'Science'}
+          chapterRawText={chapter.rawText || (chapter as any).documentText}
+          isOpen={true}
+          onClose={() => setReaderMilestone(null)}
+          onProceedToCheckpoints={() => {
+            const sec = readerMilestone;
+            setReaderMilestone(null);
+            setCheckpointsMilestone(sec);
+          }}
+          onMarkRead={(secId) => handleMarkSummaryRead(secId)}
+          onOpenDocumentSource={() => setIsDocumentReaderOpen(true)}
+        />
+      )}
+
+      {/* Module 2: Dedicated Checkpoints Runner (Open-Ended Synthesis & Derivations) */}
+      {checkpointsMilestone && (
+        <MilestoneCheckpointsRunner
+          section={checkpointsMilestone}
+          chapterName={chapter.name}
+          subjectName={subject?.name || 'Science'}
+          isOpen={true}
+          onClose={() => setCheckpointsMilestone(null)}
+          onProceedToRecallDeck={() => {
+            const sec = checkpointsMilestone;
+            setCheckpointsMilestone(null);
+            setRecallDeckMilestone(sec);
+          }}
+          onSaveCheckpoints={(secId, checkpoints, scorePct) => {
+            handleSaveCheckpoints(secId, checkpoints, scorePct);
+          }}
+        />
+      )}
+
+      {/* Module 3: RemNote-Style Active Recall Deck Runner (SM-2 Spaced Repetition) */}
+      {recallDeckMilestone && (
+        <MilestoneRecallDeckRunner
+          section={recallDeckMilestone}
+          chapterName={chapter.name}
+          subjectName={subject?.name || 'Science'}
+          isOpen={true}
+          onClose={() => setRecallDeckMilestone(null)}
+          checkpointsScore={getMilestoneCheckpointsScore(recallDeckMilestone.id)}
+          onUpdateCards={(secId, updatedCards, recallScore) => {
+            handleUpdateRecallCards(secId, updatedCards, recallScore);
+          }}
+        />
+      )}
+
+      {/* =================================================================== */}
+      {/* LEGACY / FALLBACK INTERACTIVE MODALS */}
       {/* =================================================================== */}
       {summaryModalSection && (
         <SummaryReaderModal
@@ -1104,8 +1341,10 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
       {quizModalSection && (
         <CheckLearningDrillModal
           section={quizModalSection.section}
+          activeMilestone={quizModalSection.section}
           chapterName={chapter.name}
           subjectName={subject?.name || 'Science'}
+          chapterRawText={chapter.rawText || (chapter as any).documentText}
           isOpen={true}
           initialMode={quizModalSection.mode}
           onClose={() => setQuizModalSection(null)}
@@ -1114,13 +1353,26 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             setQuizModalSection(null);
             setReadingSection(sec);
           }}
+          onSaveMilestoneQuestions={(secId, qList) => {
+            const updated = sections.map((s) =>
+              s.id === secId ? { ...s, checkLearningQuestions: qList } : s
+            );
+            setSections(updated);
+            onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+            try {
+              localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+            } catch {}
+          }}
         />
       )}
 
       {flashcardsModalSection && (
         <FullScreenFlashcardStudy
           section={flashcardsModalSection.section}
+          activeMilestone={flashcardsModalSection.section}
           chapterName={chapter.name}
+          activeChapter={chapter}
+          chapterRawText={chapter.rawText || (chapter as any).documentText}
           subjectName={subject?.name || 'Science'}
           isOpen={true}
           initialMode={flashcardsModalSection.mode}

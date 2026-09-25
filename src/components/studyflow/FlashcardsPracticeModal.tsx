@@ -24,7 +24,9 @@ export const FlashcardsPracticeModal: React.FC<FlashcardsPracticeModalProps> = (
   return (
     <FullScreenFlashcardStudy
       section={section}
+      activeMilestone={section}
       chapterName={chapterName}
+      activeChapter={{ name: chapterName, title: chapterName }}
       subjectName={subjectName}
       isOpen={isOpen}
       initialMode={mode}

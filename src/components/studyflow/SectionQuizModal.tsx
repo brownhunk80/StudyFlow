@@ -90,204 +90,51 @@ export const SectionQuizModal: React.FC<SectionQuizModalProps> = ({
       ? section.keyTopics
       : [title];
 
-    const generated: EnrichedQuizQuestion[] = [];
-
-    if (difficulty === 'recall') {
-      // 1. Foundational Recall Q1
-      generated.push({
-        id: `q-${section.id}-rec-1`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `What is the fundamental definition and governing relationship for "${topics[0] || title}"?`,
-        choices: [
-          `The focal length (f) of a spherical mirror equals half its radius of curvature (f = R / 2).`,
-          `The focal length equals twice the radius of curvature (f = 2R).`,
-          `The radius of curvature is completely independent of the focal length for all apertures.`,
-          `The focal length is always positive regardless of whether the mirror is concave or convex.`,
-        ],
-        correctIndex: 0,
-        explanation: `For spherical mirrors of small aperture, the principal focus lies halfway between the pole and center of curvature (f = R / 2).`,
-        topicTag: topics[0] || title,
-        difficulty: 'Recall',
-        correctAnalysis: `For paraxial rays close to the principal axis, the geometry of reflection forces rays to converge or appear to diverge through the focal point situated at R / 2. This satisfies the law of reflection (i = r).`,
-        distractorAnalyses: {
-          1: `Inverts the mathematical relation: f = 2R mistakenly doubles the radius instead of halving it.`,
-          2: `Incorrect: R and f are strictly tied by geometry in spherical optics (R = 2f).`,
-          3: `Violates the Cartesian sign convention: Concave mirrors have negative focal length, convex have positive.`,
-        },
-      });
-
-      // 2. Recall Q2 - Sign convention
-      generated.push({
-        id: `q-${section.id}-rec-2`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `Under the New Cartesian Sign Convention, why is the object distance (u) conventionally taken with a negative sign?`,
-        choices: [
-          `Because the object is placed to the left of the mirror/lens, opposite to incident ray direction.`,
-          `Because real objects can only have negative mass and height in optics.`,
-          `Because reflection always inverts the physical sign of all distances along the x-axis.`,
-          `Because the focal length is negative for all optical systems.`,
-        ],
-        correctIndex: 0,
-        explanation: `Distances measured opposite to the direction of incident light (conventionally left of the pole) are taken as negative.`,
-        topicTag: topics[1] || 'Cartesian Sign Convention',
-        difficulty: 'Recall',
-        correctAnalysis: `The origin is set at the pole (P). Light travels left-to-right. Since the object is stationed on the left side, the vector from pole to object runs opposite to the light beam, yielding a negative sign.`,
-        distractorAnalyses: {
-          1: `Nonsensical physics distractor: Object mass has no bearing on optical Cartesian coordinates.`,
-          2: `Reflection only alters the path of light, not the fixed Cartesian coordinate definitions.`,
-          3: `False generalization: Convex mirrors and convex lenses have positive focal lengths.`,
-        },
-      });
-
-      // 3. Recall Q3 - Image characteristics
-      generated.push({
-        id: `q-${section.id}-rec-3`,
-        quizId: `qz-${section.id}`,
-        type: questionStyles.freeResponse && !questionStyles.multipleChoice ? 'free_response' : 'multiple_choice',
-        questionText: `A concave mirror produces a virtual, erect, and magnified image only when the object is placed at which position?`,
-        choices: [
-          `Between the pole (P) and the principal focus (F).`,
-          `At the center of curvature (C).`,
-          `Beyond the center of curvature (C).`,
-          `At infinity.`,
-        ],
-        correctIndex: 0,
-        explanation: `When an object is placed between P and F, reflected rays diverge; their backward extensions form an erect, magnified virtual image behind the mirror.`,
-        topicTag: topics[2] || 'Image Formation Rules',
-        difficulty: 'Recall',
-        correctAnalysis: `Between P and F is the single position where reflected rays diverge in front of the mirror, necessitating backward projection behind the mirror surface.`,
-        distractorAnalyses: {
-          1: `At C, the image is real, inverted, and identical in size to the object.`,
-          2: `Beyond C, the image is real, inverted, and diminished between C and F.`,
-          3: `At infinity, the image is formed at focus F as a highly diminished point size.`,
-        },
-        modelAnswer: `The object must be located between the pole (P) and the principal focus (F). The resulting rays diverge in front of the mirror, creating a virtual, upright, magnified image behind the mirror surface.`,
-      });
-
-      // 4. Recall Q4 - Core Formula
-      generated.push({
-        id: `q-${section.id}-rec-4`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `What is the correct Mirror Formula relating focal length (f), image distance (v), and object distance (u)?`,
-        choices: [
-          `1 / f = 1 / v + 1 / u`,
-          `1 / f = 1 / v - 1 / u`,
-          `f = v + u`,
-          `1 / f = (v * u) / (v + u)`,
-        ],
-        correctIndex: 0,
-        explanation: `The mirror formula is 1/f = 1/v + 1/u. Note that 1/f = 1/v - 1/u is the lens formula.`,
-        topicTag: 'Mirror Formula vs Lens Formula',
-        difficulty: 'Recall',
-        correctAnalysis: `The mirror formula features a positive addition between 1/v and 1/u. It relates distances from the pole regardless of whether the mirror is concave or convex.`,
-        distractorAnalyses: {
-          1: `Common Trap: 1/f = 1/v - 1/u is the LENS formula (refraction), not the mirror formula!`,
-          2: `Linear distance addition is mathematically invalid for reciprocal focal relations.`,
-          3: `Inverts the reciprocal equation (this would equal f, not 1/f).`,
-        },
-      });
-    } else {
-      // APPLICATION - HARDER
-      // 1. Application Numerical Q1
-      generated.push({
-        id: `q-${section.id}-app-1`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `An object is placed 15 cm in front of a concave mirror of focal length 10 cm. What is the image distance (v) and its nature?`,
-        choices: [
-          `v = -30 cm; Real, inverted, and magnified (m = -2).`,
-          `v = +30 cm; Virtual, erect, and magnified (m = +2).`,
-          `v = -6 cm; Real, diminished, and inverted (m = -0.4).`,
-          `v = -15 cm; Real and same size (m = -1).`,
-        ],
-        correctIndex: 0,
-        explanation: `Using 1/v = 1/f - 1/u = 1/(-10) - 1/(-15) = -1/10 + 1/15 = -1/30 ⇒ v = -30 cm. Since v is negative, image is real & inverted. m = -v/u = -(-30)/(-15) = -2.`,
-        topicTag: 'Mirror Equation Calculations',
-        difficulty: 'Application',
-        correctAnalysis: `Step 1: Assign signs: u = -15 cm, f = -10 cm (concave mirror).\nStep 2: 1/v = 1/f - 1/u = (-3 + 2)/30 = -1/30 ⇒ v = -30 cm.\nStep 3: Magnification m = -v/u = -(-30)/(-15) = -2 (real, inverted, 2x magnification).`,
-        distractorAnalyses: {
-          1: `Missed negative sign in 1/f: Forgot that concave mirrors have negative focal length, treating it as positive +10 cm.`,
-          2: `Used lens formula 1/f = 1/v - 1/u instead of mirror formula 1/f = 1/v + 1/u.`,
-          3: `Assumed object is at center of curvature (C = 20 cm, not 15 cm).`,
-        },
-      });
-
-      // 2. Application Q2 - Magnification & Multi-step
-      generated.push({
-        id: `q-${section.id}-app-2`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `A rear-view convex mirror on an automobile has a radius of curvature of 3.00 m. If a bus is located 5.00 m from this mirror, where is the image formed?`,
-        choices: [
-          `+1.15 m behind the mirror; Virtual, erect, and diminished.`,
-          `-1.15 m in front of the mirror; Real and inverted.`,
-          `+0.85 m behind the mirror; Virtual and magnified.`,
-          `+1.50 m at the focal plane; Point sized.`,
-        ],
-        correctIndex: 0,
-        explanation: `R = +3.00 m ⇒ f = +1.50 m. u = -5.00 m. 1/v = 1/f - 1/u = 1/1.5 - 1/(-5) = 1/1.5 + 1/5 = 6.5/7.5 ⇒ v = +1.15 m behind mirror.`,
-        topicTag: 'Convex Mirror Ray Tracing',
-        difficulty: 'Application',
-        correctAnalysis: `Convex mirrors always form virtual, erect, diminished images behind the mirror (v > 0). With f = +1.50 m and u = -5.00 m: 1/v = 1/1.5 + 1/5 = 13/15 ⇒ v = +1.15 m.`,
-        distractorAnalyses: {
-          1: `Convex mirrors NEVER produce real images of real objects in front of the mirror.`,
-          2: `Arithmetic inversion error during LCD calculation for 1/1.5 + 1/5.`,
-          3: `Image forms at focal plane only when the bus is infinitely far away, not at 5.00 m.`,
-        },
-      });
-
-      // 3. Application Q3 - Free Response or Conceptual Application
-      generated.push({
-        id: `q-${section.id}-app-3`,
-        quizId: `qz-${section.id}`,
-        type: questionStyles.freeResponse ? 'free_response' : 'multiple_choice',
-        questionText: `Why does a dentist use a concave mirror instead of a convex mirror during patient examinations?`,
-        choices: [
-          `When held close to the teeth (within focal length), it produces an upright and magnified virtual image.`,
-          `Because concave mirrors provide a wider field of view covering all teeth simultaneously.`,
-          `Because concave mirrors produce real, inverted images that fit inside photographic sensors.`,
-          `Because convex mirrors absorb light and cause glare inside the oral cavity.`,
-        ],
-        correctIndex: 0,
-        explanation: `Within focal distance (u < f), a concave mirror produces a magnified, upright virtual image, allowing precise inspection of cavities.`,
-        topicTag: 'Practical Applications of Optics',
-        difficulty: 'Application',
-        correctAnalysis: `When u < f, reflected rays diverge in front and form an enlarged upright virtual image behind the reflective surface, giving the dentist an enlarged view of microscopic enamel lesions.`,
-        distractorAnalyses: {
-          1: `Wider field of view is the property of CONVEX mirrors (used in vehicle rear-view mirrors), not concave.`,
-          2: `An inverted real image would disorient the dentist and cause dental instrument placement errors.`,
-          3: `Mirrors reflect light, they do not selectively absorb oral illumination.`,
-        },
-        modelAnswer: `Dentists hold the concave mirror within its focal length (u < f). In this specific region, reflected rays project backward to form a virtual, upright, and significantly magnified image of the teeth.`,
-      });
-
-      // 4. Application Q4 - Boundary condition
-      generated.push({
-        id: `q-${section.id}-app-4`,
-        quizId: `qz-${section.id}`,
-        type: 'multiple_choice',
-        questionText: `If the lower half of a concave mirror's reflecting surface is covered with an opaque black paper, what happens to the image of an object placed in front of it?`,
-        choices: [
-          `The complete image is still formed, but its brightness (intensity) is reduced by half.`,
-          `Only the upper half of the object's image is visible.`,
-          `The lower half of the image disappears completely.`,
-          `The image gets magnified by twice its original height.`,
-        ],
-        correctIndex: 0,
-        explanation: `Every small portion of the mirror forms a complete image. Covering half the mirror only halves the number of reflecting rays, reducing intensity without truncating the image.`,
-        topicTag: 'Wavefront & Ray Distribution',
-        difficulty: 'Application',
-        correctAnalysis: `Rays from every single point of the object strike all parts of the mirror. The unblocked upper half still receives rays from all object coordinates, focusing them into a complete image with 50% luminosity.`,
-        distractorAnalyses: {
-          1: `Classic Board Exam Trap: Mistakenly assuming geometric clipping occurs (it doesn't, intensity drops instead).`,
-          2: `The same misconception as option B: Covering half the mirror does not delete half the image.`,
-          3: `Covering aperture does not alter curvature radius R or focal length f.`,
-        },
-      });
+    const existing = (section as any).questions || section.quizzes?.[0]?.questions;
+    if (Array.isArray(existing) && existing.length > 0) {
+      return existing.slice(0, questionCount).map((q: any, idx: number) => ({
+        id: q.id || `q-${section.id}-${idx + 1}`,
+        quizId: q.quizId || `qz-${section.id}`,
+        type: 'multiple_choice' as const,
+        questionText: q.questionText || q.question || '',
+        choices: q.choices || q.options || ['Option A', 'Option B', 'Option C', 'Option D'],
+        correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0,
+        explanation: q.explanation || 'Verified curriculum concept.',
+        topicTag: q.topicTag || topics[idx % topics.length] || title,
+        difficulty: q.difficulty || (difficulty === 'recall' ? 'Recall' : 'Application'),
+        correctAnalysis: q.correctAnalysis || q.explanation || 'Verified answer.',
+        distractorAnalyses: q.distractorAnalyses || {},
+      }));
     }
+
+    const generated: EnrichedQuizQuestion[] = [];
+    topics.forEach((topic, idx) => {
+      const isRecall = difficulty === 'recall' || idx % 2 === 0;
+      generated.push({
+        id: `q-${section.id}-${idx + 1}`,
+        quizId: `qz-${section.id}`,
+        type: 'multiple_choice' as const,
+        questionText: isRecall
+          ? `What is the core definition and foundational criterion of "${topic}" in ${title}?`
+          : `When applying "${topic}" to practical analysis, which conclusion follows directly from syllabus principles?`,
+        choices: [
+          `It establishes the governing criteria and foundational laws defining ${topic}.`,
+          `It acts inversely to established theoretical relationships.`,
+          `It represents an obsolete historical approximation with no relevance.`,
+          `It functions independently with no structural relationship to ${title}.`,
+        ],
+        correctIndex: 0,
+        explanation: `"${topic}" forms an essential concept within ${title}, providing governing principles for problem solving.`,
+        topicTag: topic,
+        difficulty: isRecall ? 'Recall' : 'Application',
+        correctAnalysis: `Option A correctly identifies the core principles governing "${topic}".`,
+        distractorAnalyses: {
+          1: `Trap: Contradicts established principles of ${topic}.`,
+          2: `Trap: "${topic}" is actively taught in the core curriculum.`,
+          3: `Trap: It is directly integrated with ${title}.`,
+        },
+      });
+    });
 
     return generated.slice(0, questionCount);
   }, [section, difficulty, questionStyles, questionCount]);

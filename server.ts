@@ -6,9 +6,30 @@ import { processDocumentWithGemini } from './src/api/chapters/process-document';
 import { inspectUploadedDocument } from './src/api/debug/inspect-document';
 import { extractChapterMilestones } from './src/api/chapters/extract-milestones';
 import { generateMilestoneContent } from './src/api/chapters/generate-milestone-content';
+import {
+  generateCheckLearningQuestions,
+  CheckLearningGenerateRequestSchema,
+} from './src/api/check-learning/generate';
+import {
+  generateGroundedQuestions,
+  GenerateGroundedQuestionsRequestSchema,
+} from './src/api/questions/generate-grounded';
+import {
+  generateRecallDeck,
+  RecallDeckGenerateRequestSchema,
+} from './src/api/recall-deck/generate';
 
 const app = express();
 const PORT = 3000;
+
+// Prevent background async tasks or orphaned network promises from triggering uncaught process crashes
+process.on('unhandledRejection', (reason: any) => {
+  console.warn('[Server] Intercepted unhandled rejection:', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err: any) => {
+  console.error('[Server] Intercepted uncaught exception:', err?.message || err);
+});
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -41,7 +62,7 @@ function formatErrorNote(err: any): string {
 
 /**
  * Executes generateContent with multi-model fallback to protect against 503 high-demand spikes.
- * Uses gemini-3.8-flash, gemini-3.6-flash, gemini-flash-latest, and gemini-3.1-flash-lite.
+ * Uses gemini-3.8-flash, gemini-3.1-flash-lite, and gemini-flash-latest.
  */
 async function generateGeminiContent(
   ai: GoogleGenAI,
@@ -59,9 +80,8 @@ async function generateGeminiContent(
   const models = [
     preferred,
     'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
   ];
   const uniqueModels = Array.from(new Set(models)).filter((m) => m !== 'gemini-2.5-flash');
 
@@ -79,9 +99,8 @@ async function generateGeminiContent(
     } catch (err: any) {
       lastError = err;
       const statusNote = formatErrorNote(err);
-      console.warn(`[Gemini] Model ${model} unavailable (${statusNote}), trying alternative`);
       if (statusNote.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
   }
@@ -178,6 +197,210 @@ app.post('/api/chapters/generate-milestone-content', async (req, res) => {
     return res.status(status).json({
       error: error.code || 'GENERATION_ERROR',
       message: error.message || 'Failed to generate milestone content.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Grounded Question Generator (Anchor-and-Verify Two-Step Pattern)
+// -------------------------------------------------------------
+app.post('/api/questions/generate-grounded', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+
+    const chapterTitle = rawBody.chapterTitle || rawBody.chapterName || 'Chapter Assessment';
+    const milestoneTitle = rawBody.milestoneTitle || rawBody.title || 'Milestone Assessment';
+    const topicTags =
+      Array.isArray(rawBody.topicTags) && rawBody.topicTags.length > 0
+        ? rawBody.topicTags
+        : Array.isArray(rawBody.topics) && rawBody.topics.length > 0
+          ? rawBody.topics
+          : Array.isArray(rawBody.coreTopics) && rawBody.coreTopics.length > 0
+            ? rawBody.coreTopics
+            : [milestoneTitle];
+    const sectionTextExcerpt = rawBody.sectionTextExcerpt ?? rawBody.textExcerpt ?? '';
+    const questionCount =
+      typeof rawBody.questionCount === 'number' ? rawBody.questionCount : 4;
+
+    const payload = {
+      chapterTitle,
+      milestoneTitle,
+      topicTags,
+      sectionTextExcerpt,
+      questionCount,
+    };
+
+    // Pre-Execution Payload Validation (<150 chars guardrail)
+    if (!payload.sectionTextExcerpt || payload.sectionTextExcerpt.trim().length < 150) {
+      return res.status(400).json({
+        error: 'REJECTED',
+        message:
+          'REJECTED: Source text excerpt is empty or too short (<150 chars). Cannot generate questions without source material.',
+      });
+    }
+
+    const validationResult = GenerateGroundedQuestionsRequestSchema.safeParse(payload);
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid request parameters.',
+        details: validationResult.error.format(),
+      });
+    }
+
+    const result = await generateGroundedQuestions(
+      validationResult.data,
+      process.env.GEMINI_API_KEY
+    );
+    return res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error in /api/questions/generate-grounded:', error);
+    const isPayloadReject = error.message?.includes('REJECTED');
+    const status = isPayloadReject ? 400 : error.status || 500;
+    return res.status(status).json({
+      error: isPayloadReject ? 'REJECTED' : error.code || 'GENERATION_ERROR',
+      message: error.message || 'Failed to generate grounded questions.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Check Learning Question Generator
+// -------------------------------------------------------------
+app.post('/api/check-learning/generate', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+
+    const chapterTitle = rawBody.chapterTitle || rawBody.chapterName || 'Chapter Assessment';
+    const milestoneTitle = rawBody.milestoneTitle || rawBody.title || 'Milestone Assessment';
+    const topicTags =
+      Array.isArray(rawBody.topicTags) && rawBody.topicTags.length > 0
+        ? rawBody.topicTags
+        : Array.isArray(rawBody.topics) && rawBody.topics.length > 0
+          ? rawBody.topics
+          : Array.isArray(rawBody.coreTopics) && rawBody.coreTopics.length > 0
+            ? rawBody.coreTopics
+            : [milestoneTitle];
+    const sectionTextExcerpt = rawBody.sectionTextExcerpt ?? rawBody.textExcerpt ?? '';
+    const questionCount =
+      typeof rawBody.questionCount === 'number' ? rawBody.questionCount : 4;
+
+    // 1. Zod Request Validation
+    const validationResult = CheckLearningGenerateRequestSchema.safeParse({
+      chapterTitle,
+      milestoneTitle,
+      topicTags,
+      sectionTextExcerpt,
+      questionCount,
+    });
+
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid request parameters.',
+        details: validationResult.error.format(),
+      });
+    }
+
+    // 2. Guardrail: If sectionTextExcerpt is empty, undefined, or fewer than 60 characters, immediately return 400 error
+    const trimmedExcerpt = (validationResult.data.sectionTextExcerpt || '').trim();
+    if (!trimmedExcerpt || trimmedExcerpt.length < 60) {
+      return res.status(400).json({
+        error: 'No source text provided for this milestone. Please verify the document extraction.',
+      });
+    }
+
+    // 3. Generate Questions using Anchor-and-Verify Grounded Pipeline
+    let result: any;
+    if (trimmedExcerpt.length >= 150) {
+      result = await generateGroundedQuestions(
+        {
+          chapterTitle: validationResult.data.chapterTitle,
+          milestoneTitle: validationResult.data.milestoneTitle,
+          topicTags: validationResult.data.topicTags,
+          sectionTextExcerpt: trimmedExcerpt,
+          questionCount: validationResult.data.questionCount,
+        },
+        process.env.GEMINI_API_KEY
+      );
+    } else {
+      result = await generateCheckLearningQuestions({
+        chapterTitle: validationResult.data.chapterTitle,
+        milestoneTitle: validationResult.data.milestoneTitle,
+        topicTags: validationResult.data.topicTags,
+        sectionTextExcerpt: trimmedExcerpt,
+        questionCount: validationResult.data.questionCount,
+      });
+    }
+
+    return res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error in /api/check-learning/generate:', error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'GENERATION_ERROR',
+      message: error.message || 'Failed to generate check-learning questions.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Active Recall Deck Generator (Parent-Child RemNote Schema)
+// -------------------------------------------------------------
+app.post('/api/recall-deck/generate', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+
+    const validationResult = RecallDeckGenerateRequestSchema.safeParse(rawBody);
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid request parameters.',
+        details: validationResult.error.format(),
+      });
+    }
+
+    const { chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, cardCount } =
+      validationResult.data;
+
+    // Guardrail: Return 400 if sectionTextExcerpt is fewer than 80 characters
+    const trimmedExcerpt = (sectionTextExcerpt || '').trim();
+    if (!trimmedExcerpt || trimmedExcerpt.length < 80) {
+      return res.status(400).json({
+        error: 'INVALID_EXCERPT',
+        message:
+          'No text excerpt provided for this milestone or excerpt is fewer than 80 characters. Please verify document extraction.',
+      });
+    }
+
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.VITE_GEMINI_API_KEY ||
+      '';
+
+    const result = await generateRecallDeck(
+      {
+        milestoneTitle,
+        chapterTitle,
+        topicTags,
+        sectionTextExcerpt: trimmedExcerpt,
+        cardCount,
+      },
+      apiKey
+    );
+
+    return res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error in /api/recall-deck/generate:', error);
+    const status =
+      typeof error?.status === 'number'
+        ? error.status
+        : typeof error?.statusCode === 'number'
+          ? error.statusCode
+          : 500;
+    return res.status(status).json({
+      error: error?.code || 'GENERATION_ERROR',
+      message: error?.message || 'Failed to generate recall deck cards.',
     });
   }
 });

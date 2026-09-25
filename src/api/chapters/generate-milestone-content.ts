@@ -117,31 +117,38 @@ ${excerpt ? `Reference Material Excerpt:\n---\n${excerpt.slice(0, 15000)}\n---` 
 Generate the detailed summary, check learning questions, and active recall deck for this single milestone.`;
 
     const candidateModels = [
-      'gemini-3.6-flash',
-      'gemini-3.1-flash-lite',
       'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
     ];
 
     for (const model of candidateModels) {
+      let timeoutId: any = null;
       try {
         console.log(`[GenerateMilestoneContent] Calling ${model} for "${milestoneTitle}"`);
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`Model ${model} request timed out after 12s`)), 12000);
+          timeoutId = setTimeout(() => reject(new Error(`Model ${model} request timed out after 20s`)), 20000);
         });
 
-        const response = await Promise.race([
-          ai.models.generateContent({
-            model,
-            contents: userPrompt,
-            config: {
-              systemInstruction,
-              responseMimeType: 'application/json',
-              temperature: 0.15,
-            },
-          }),
-          timeoutPromise,
-        ]);
+        const apiPromise = ai.models.generateContent({
+          model,
+          contents: userPrompt,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: 0.15,
+          },
+        });
+
+        // Crucial: Attach a catch handler to apiPromise immediately to prevent unhandled rejection
+        // if timeoutPromise rejects the race before apiPromise resolves or rejects in the background
+        apiPromise.catch((err) => {
+          console.warn(`[GenerateMilestoneContent] Background apiPromise caught for ${model}:`, err?.message || err);
+        });
+
+        const response = await Promise.race([apiPromise, timeoutPromise]);
+
+        clearTimeout(timeoutId);
 
         const rawJson = (response.text || '').trim();
         if (rawJson) {
@@ -154,7 +161,13 @@ Generate the detailed summary, check learning questions, and active recall deck 
           }
         }
       } catch (err: any) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
         console.warn(`[GenerateMilestoneContent] Model ${model} failed:`, err?.message || err);
+        if (`${err?.message}`.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
+          await new Promise((res) => setTimeout(res, 400));
+        }
       }
     }
   }

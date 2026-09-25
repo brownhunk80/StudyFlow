@@ -126,36 +126,42 @@ ${truncatedText}
 
 Extract the 3 to 6 curriculum milestones matching the sections and headings above.`;
 
-  // Cascade through modern supported models.
-  // Note: gemini-3.6-flash is recommended, gemini-3.1-flash-lite provides light fast discovery.
+  // Cascade through modern supported models (gemini-3.8-flash, gemini-3.1-flash-lite, gemini-flash-latest)
   const candidateModels = [
-    'gemini-3.6-flash',
-    'gemini-3.1-flash-lite',
     'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
   ];
 
   let lastError: any = null;
 
   for (const model of candidateModels) {
+    let timeoutId: any = null;
     try {
       console.log(`[ExtractMilestones] Requesting outline discovery with model: ${model}`);
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Model ${model} request timed out after 12s`)), 12000);
+        timeoutId = setTimeout(() => reject(new Error(`Model ${model} request timed out after 20s`)), 20000);
       });
 
-      const response = await Promise.race([
-        ai.models.generateContent({
-          model,
-          contents: userPrompt,
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
-        }),
-        timeoutPromise,
-      ]);
+      const apiPromise = ai.models.generateContent({
+        model,
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      // Crucial: Attach a catch handler to apiPromise immediately to prevent unhandled rejection
+      // if timeoutPromise rejects the race before apiPromise resolves or rejects in the background
+      apiPromise.catch((err) => {
+        console.warn(`[ExtractMilestones] Background apiPromise caught for ${model}:`, err?.message || err);
+      });
+
+      const response = await Promise.race([apiPromise, timeoutPromise]);
+
+      clearTimeout(timeoutId);
 
       const rawJson = (response.text || '').trim();
       if (!rawJson) {
@@ -195,8 +201,15 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
 
       throw new Error(`Invalid schema output from model ${model}: ${validated.error.message}`);
     } catch (err: any) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       console.warn(`[ExtractMilestones] Model ${model} failed:`, err?.message || err);
       lastError = err;
+      // Brief pause before trying fallback model if 503/429
+      if (`${err?.message}`.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
+        await new Promise((res) => setTimeout(res, 400));
+      }
     }
   }
 

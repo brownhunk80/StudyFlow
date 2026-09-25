@@ -291,7 +291,7 @@ export const DocumentDiagnosticsModal: React.FC<DocumentDiagnosticsModalProps> =
                 {/* Tab 1: Overview / Diagnostic logs */}
                 {activeTab === 'overview' && (
                   <div className="p-4 rounded-2xl bg-slate-900 text-slate-300 font-mono text-xs space-y-2 max-h-48 overflow-y-auto">
-                    <p className="text-slate-400 font-bold"># Ingestion Trace Logs:</p>
+                    <p className="text-slate-400 font-bold">Ingestion Trace Logs:</p>
                     {diagnosticData.ingestionMethod?.diagnostics?.map((diag, idx) => (
                       <p key={idx} className="leading-relaxed">
                         <span className="text-indigo-400">[{idx + 1}]</span> {diag}

@@ -187,25 +187,6 @@ export const StudyPlanSectionAccordion: React.FC<StudyPlanSectionAccordionProps>
           </div>
         </div>
 
-        {/* Key Topics Tags */}
-        {section.keyTopics && section.keyTopics.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pl-10">
-            {section.keyTopics.slice(0, 4).map((topic, tIdx) => (
-              <span
-                key={tIdx}
-                className="px-2.5 py-0.5 text-[11px] font-semibold rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60"
-              >
-                #{topic}
-              </span>
-            ))}
-            {section.keyTopics.length > 4 && (
-              <span className="text-[11px] text-slate-400 font-bold">
-                +{section.keyTopics.length - 4} more
-              </span>
-            )}
-          </div>
-        )}
-
         {/* Alert Banner if topics need attention */}
         {needsAttention && (
           <div className="ml-10 p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-2 text-xs text-amber-900 dark:text-amber-200">

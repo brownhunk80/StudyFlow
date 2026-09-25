@@ -20,33 +20,74 @@ import {
   Eye,
   Edit3,
   Lightbulb,
-  ExternalLink,
   ChevronRight,
-  Archive,
   VolumeX,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Section, DocumentFlashcard } from '../../types';
 
-interface FullScreenFlashcardStudyProps {
-  section: Section;
-  chapterName: string;
+export interface ActiveRecallCard {
+  id: string;
+  breadcrumb?: string;
+  parentConcept?: string;
+  promptQuestion?: string;
+  answer?: string;
+  inlineAnswer?: string;
+  cardType?: 'single' | 'list';
+  listItems?: string[];
+  explanation?: string;
+  sourceQuote?: string;
+  topicTag?: string;
+  sectionId?: string;
+  front: string;
+  back: string;
+  sourceExcerpt?: string;
+  // Aliases for compatibility
+  frontPrompt?: string;
+  backAnswer?: string;
+  sourceContext?: string;
+  // SM-2 parameters
+  interval?: number;
+  repetition?: number;
+  easinessFactor?: number;
+  status?: 'active' | 'disabled' | 'due_today' | 'mastered' | 'learning';
+  reviewStatus?: 'due_today' | 'mastered' | 'learning';
+  isDueToday?: boolean;
+  dueDate?: string;
+  lastReviewed?: string;
+  createdAt?: string;
+}
+
+export interface FullScreenFlashcardStudyProps {
+  section?: Section;
+  activeMilestone?: Section;
+  chapterName?: string;
+  activeChapter?: { id?: string; title?: string; name?: string; rawText?: string; documentText?: string };
+  chapterRawText?: string;
   subjectName?: string;
   isOpen: boolean;
   onClose: () => void;
-  onUpdateCards?: (sectionId: string, updatedCards: DocumentFlashcard[]) => void;
+  onUpdateCards?: (sectionId: string, updatedCards: any[]) => void;
   initialMode?: 'practice' | 'edit';
 }
 
 export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> = ({
   section,
-  chapterName,
+  activeMilestone,
+  chapterName = 'Chapter',
+  activeChapter,
+  chapterRawText,
   subjectName = 'Science',
   isOpen,
   onClose,
   onUpdateCards,
   initialMode = 'practice',
 }) => {
+  const milestone = activeMilestone || section;
+  const chapterTitle = activeChapter?.title || activeChapter?.name || chapterName || 'Chapter';
+
   const [activeTab, setActiveTab] = useState<'practice' | 'edit'>(initialMode);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isRevealed, setIsRevealed] = useState(false);
@@ -60,78 +101,300 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
     relearned: 0,
   });
 
+  // Dynamic card state
+  const [cards, setCards] = useState<ActiveRecallCard[]>([]);
+  const [isLoadingCards, setIsLoadingCards] = useState<boolean>(false);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // Editor states
   const [newFront, setNewFront] = useState('');
   const [newBack, setNewBack] = useState('');
   const [newSource, setNewSource] = useState('');
+  const [newExplanation, setNewExplanation] = useState('');
   const [isAddingCard, setIsAddingCard] = useState(false);
 
-  // Initialize or fallback cards with rich cloze formatting & explanations
-  const defaultCards: DocumentFlashcard[] = useMemo(() => {
-    if (section.flashcards && section.flashcards.length > 0) {
-      return section.flashcards.filter((c) => c.status !== 'disabled');
+  // Helper to resolve document text excerpt for milestone
+  const resolveTextExcerpt = useCallback((): string => {
+    if (!milestone) return '';
+    if (milestone.sectionTextExcerpt && milestone.sectionTextExcerpt.trim().length >= 60) {
+      return milestone.sectionTextExcerpt.trim();
+    }
+    if ((milestone as any).textExcerpt && (milestone as any).textExcerpt.trim().length >= 60) {
+      return (milestone as any).textExcerpt.trim();
+    }
+    const rawDoc = activeChapter?.rawText || activeChapter?.documentText || chapterRawText;
+    if (rawDoc && rawDoc.trim().length >= 60) {
+      const raw = rawDoc.trim();
+      const titleIdx = raw.toLowerCase().indexOf(milestone.title.toLowerCase());
+      if (titleIdx >= 0) {
+        const slice = raw.slice(titleIdx, titleIdx + 2500).trim();
+        if (slice.length >= 60) return slice;
+      }
+      const topics =
+        (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics) ||
+        (Array.isArray(milestone.keyTopics) && milestone.keyTopics) ||
+        [];
+      for (const t of topics) {
+        const tIdx = raw.toLowerCase().indexOf(t.toLowerCase());
+        if (tIdx >= 0) {
+          const slice = raw.slice(Math.max(0, tIdx - 150), tIdx + 2500).trim();
+          if (slice.length >= 60) return slice;
+        }
+      }
+    }
+    let summaryText =
+      milestone.summaries?.[1]?.contentMarkdown ||
+      milestone.summaries?.[0]?.contentMarkdown ||
+      milestone.summary ||
+      (milestone as any).contentMarkdown ||
+      '';
+    if (summaryText.trim().length < 60) {
+      const topics =
+        (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics) ||
+        (Array.isArray(milestone.keyTopics) && milestone.keyTopics) ||
+        [milestone.title || 'Core Principles'];
+      summaryText = `${milestone.title}. Key foundational topics include: ${topics.join(', ')}. This unit covers core principles, systematic derivations, problem-solving methodologies, and rigorous conceptual applications in ${chapterTitle}.`;
+    }
+    return summaryText.trim();
+  }, [milestone, activeChapter, chapterRawText, chapterTitle]);
+
+  // Normalize raw card array from any legacy or recallDeck format
+  const normalizeCards = useCallback(
+    (rawList: any[]): ActiveRecallCard[] => {
+      return rawList.map((item, idx) => {
+        const parentConcept = item.parentConcept || item.topicTag || milestone?.title || 'Core Principle';
+        const frontText =
+          item.promptQuestion || item.front || item.frontPrompt || item.question || `Core Principle ${idx + 1}`;
+        const backText =
+          item.answer || item.back || item.backAnswer || item.modelAnswer || 'Underlying principle.';
+        const explanationText = item.explanation || item.notes || '';
+        const sourceText =
+          item.sourceQuote || item.sourceExcerpt || item.sourceContext || item.citation || `${milestone?.title || 'Milestone'} Notes`;
+        const cardType: 'single' | 'list' = item.cardType === 'list' ? 'list' : 'single';
+        const listItems = Array.isArray(item.listItems) ? item.listItems : [];
+
+        return {
+          id: item.id || `recall-${milestone?.id || 'card'}-${idx + 1}`,
+          parentConcept,
+          promptQuestion: frontText,
+          answer: backText,
+          cardType,
+          listItems,
+          explanation: explanationText,
+          sourceQuote: sourceText,
+          topicTag: parentConcept,
+          sectionId: milestone?.id,
+          front: frontText,
+          back: backText,
+          sourceExcerpt: sourceText,
+          frontPrompt: frontText,
+          backAnswer: backText,
+          sourceContext: sourceText,
+          interval: typeof item.interval === 'number' ? item.interval : 1,
+          repetition: typeof item.repetition === 'number' ? item.repetition : 0,
+          easinessFactor: typeof item.easinessFactor === 'number' ? item.easinessFactor : 2.5,
+          status: item.status === 'disabled' ? 'disabled' : 'active',
+          dueDate: item.dueDate,
+          lastReviewed: item.lastReviewed,
+          createdAt: item.createdAt,
+        };
+      });
+    },
+    [milestone?.id, milestone?.title]
+  );
+
+  // Load cards dynamically on open / milestone change
+  useEffect(() => {
+    if (!isOpen || !milestone) return;
+
+    setCurrentIndex(0);
+    setIsRevealed(false);
+    setShowAITutor(false);
+    setSessionCompleted(false);
+    setStudyStats({ total: 0, understood: 0, relearned: 0 });
+    setLoadError(null);
+
+    // 1. Check if activeMilestone already has recallDeck or flashcards in state/storage
+    let existingList: any[] | null = null;
+    if (Array.isArray(milestone.recallDeck) && milestone.recallDeck.length > 0) {
+      existingList = milestone.recallDeck;
+    } else if (Array.isArray((milestone as any).recallCards) && (milestone as any).recallCards.length > 0) {
+      existingList = (milestone as any).recallCards;
+    } else if (Array.isArray(milestone.flashcards) && milestone.flashcards.length > 0) {
+      existingList = milestone.flashcards;
+    } else {
+      try {
+        const cached = localStorage.getItem(`recall_deck_${milestone.id}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            existingList = parsed;
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
 
-    const topics = section.keyTopics && section.keyTopics.length > 0
-      ? section.keyTopics
-      : [section.title];
+    if (existingList && existingList.length > 0) {
+      setCards(normalizeCards(existingList));
+      setIsLoadingCards(false);
+      return;
+    }
 
-    return [
-      {
-        id: `fc-${section.id}-1`,
-        sectionId: section.id,
-        frontPrompt: `In the study of ${section.title}, the governing relation states that {{c1::the incident ray, reflected ray, and the normal}} all lie in the same plane at the point of incidence.`,
-        backAnswer: `The incident ray, reflected ray, and the normal at the point of incidence all lie in the exact same geometric plane.`,
-        sourceContext: `Chapter: ${chapterName} • Subsection ${section.sectionNumber} (NCERT Standard Page 160)`,
-        interval: 1,
-        repetition: 0,
-        easinessFactor: 2.5,
-        status: 'active',
-      },
-      {
-        id: `fc-${section.id}-2`,
-        sectionId: section.id,
-        frontPrompt: `What is the algebraic relationship between radius of curvature (R) and focal length (f) for spherical mirrors of small aperture? Answer: {{c1::R = 2f}} (or f = R / 2).`,
-        backAnswer: `R = 2f  (Focal length equals half the radius of curvature: f = R / 2)`,
-        sourceContext: `Ray Optics Mathematical Derivations & Axioms`,
-        interval: 2,
-        repetition: 1,
-        easinessFactor: 2.6,
-        status: 'active',
-      },
-      {
-        id: `fc-${section.id}-3`,
-        sectionId: section.id,
-        frontPrompt: `According to the Cartesian Sign Convention for ${topics[0] || section.title}, object distance (u) is always assigned a {{c1::negative (-) sign}}.`,
-        backAnswer: `Negative (-) sign, because the object is placed to the left of the mirror and incident light travels from left to right.`,
-        sourceContext: `Standard Sign Convention Guide • Table 10.1`,
-        interval: 1,
-        repetition: 0,
-        easinessFactor: 2.4,
-        status: 'active',
-      },
-      {
-        id: `fc-${section.id}-4`,
-        sectionId: section.id,
-        frontPrompt: `The focal length of a concave mirror is taken as {{c1::negative (-)}}, whereas for a convex mirror it is taken as {{c1::positive (+)}}.`,
-        backAnswer: `Concave mirror: Negative (-) focal length. Convex mirror: Positive (+) focal length.`,
-        sourceContext: `Board Exam Formula Cheat Sheet • Section ${section.sectionNumber}`,
-        interval: 3,
-        repetition: 2,
-        easinessFactor: 2.7,
-        status: 'active',
-      },
-    ];
-  }, [section, chapterName]);
+    // 2. Empty state: activeMilestone.recallDeck has 0 cards -> Fetch /api/recall-deck/generate
+    let isCancelled = false;
+    setIsLoadingCards(true);
 
-  const [cards, setCards] = useState<DocumentFlashcard[]>(defaultCards);
+    const topics =
+      (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics.length > 0 && (milestone as any).coreTopics) ||
+      (Array.isArray(milestone.keyTopics) && milestone.keyTopics.length > 0 && milestone.keyTopics) ||
+      [milestone.title || 'Core Principles'];
 
-  // Active cards in current queue
+    const excerpt = resolveTextExcerpt();
+
+    fetch('/api/recall-deck/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: milestone.id,
+        milestoneId: milestone.id,
+        title: milestone.title,
+        milestoneTitle: milestone.title,
+        topics,
+        topicTags: topics,
+        coreTopics: topics,
+        textExcerpt: excerpt,
+        sectionTextExcerpt: excerpt,
+        chapterTitle,
+        chapterName: chapterTitle,
+        cardCount: 5,
+      }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (isCancelled) return;
+        const generatedList = Array.isArray(data.cards) ? data.cards : Array.isArray(data.recallDeck) ? data.recallDeck : [];
+        if (generatedList.length > 0) {
+          milestone.recallDeck = generatedList;
+          try {
+            localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(generatedList));
+          } catch {}
+          onUpdateCards?.(milestone.id, generatedList);
+          setCards(normalizeCards(generatedList));
+        } else {
+          // Dynamic fallback based on milestone topics
+          const fallback = topics.slice(0, 4).map((topic: string, i: number) => ({
+            id: `recall-${milestone.id}-${i + 1}`,
+            front: `What core principle and governing relationship defines ${topic}?`,
+            back: `In ${milestone.title}, ${topic} establishes foundational conceptual axioms and rules governing behavior and analytical reasoning.`,
+            explanation: `Understanding ${topic} is critical to securing understanding and full examination marks.`,
+            sourceExcerpt: excerpt.slice(0, 140) || `${milestone.title} Notes`,
+          }));
+          milestone.recallDeck = fallback;
+          setCards(normalizeCards(fallback));
+        }
+        setIsLoadingCards(false);
+      })
+      .catch((err) => {
+        if (isCancelled) return;
+        console.warn('[FullScreenFlashcardStudy] Generation failed, creating topic-aligned deck:', err);
+        const fallback = topics.slice(0, 4).map((topic: string, i: number) => ({
+          id: `recall-${milestone.id}-${i + 1}`,
+          front: `What core principle and governing relationship defines ${topic}?`,
+          back: `In ${milestone.title}, ${topic} establishes foundational conceptual axioms and rules governing behavior and analytical reasoning.`,
+          explanation: `Understanding ${topic} is critical to securing understanding and full examination marks.`,
+          sourceExcerpt: excerpt.slice(0, 140) || `${milestone.title} Notes`,
+        }));
+        milestone.recallDeck = fallback;
+        setCards(normalizeCards(fallback));
+        setIsLoadingCards(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isOpen, milestone?.id, milestone?.title, chapterTitle, resolveTextExcerpt, normalizeCards]);
+
+  // Reset / Re-sync with Notes Recall Deck
+  const handleRegenerateDeck = async () => {
+    if (!milestone || isRegenerating || isLoadingCards) return;
+
+    // 1. Clear milestone.recallDeck & cache
+    milestone.recallDeck = [];
+    (milestone as any).flashcards = [];
+    delete (milestone as any).recallCards;
+    try {
+      localStorage.removeItem(`recall_deck_${milestone.id}`);
+    } catch {}
+
+    setCards([]);
+    setIsRegenerating(true);
+    setIsLoadingCards(true);
+    setCurrentIndex(0);
+    setIsRevealed(false);
+    setShowAITutor(false);
+    setSessionCompleted(false);
+    setStudyStats({ total: 0, understood: 0, relearned: 0 });
+
+    const topics =
+      (Array.isArray((milestone as any).coreTopics) && (milestone as any).coreTopics.length > 0 && (milestone as any).coreTopics) ||
+      (Array.isArray(milestone.keyTopics) && milestone.keyTopics.length > 0 && milestone.keyTopics) ||
+      [milestone.title || 'Core Principles'];
+
+    const excerpt = resolveTextExcerpt();
+
+    try {
+      const res = await fetch('/api/recall-deck/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: milestone.id,
+          milestoneId: milestone.id,
+          title: milestone.title,
+          milestoneTitle: milestone.title,
+          topics,
+          topicTags: topics,
+          coreTopics: topics,
+          textExcerpt: excerpt,
+          sectionTextExcerpt: excerpt,
+          chapterTitle,
+          chapterName: chapterTitle,
+          cardCount: 5,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const generatedList = Array.isArray(data.cards) ? data.cards : Array.isArray(data.recallDeck) ? data.recallDeck : [];
+
+      if (generatedList.length > 0) {
+        milestone.recallDeck = generatedList;
+        try {
+          localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(generatedList));
+        } catch {}
+        onUpdateCards?.(milestone.id, generatedList);
+        setCards(normalizeCards(generatedList));
+      }
+    } catch (err: any) {
+      console.warn('[FullScreenFlashcardStudy] Regenerate failed:', err);
+      setLoadError('Failed to refresh deck. Keeping current cards.');
+    } finally {
+      setIsRegenerating(false);
+      setIsLoadingCards(false);
+    }
+  };
+
+  // Active cards queue (non-disabled cards)
   const activeCards = useMemo(() => {
     return cards.filter((c) => c.status !== 'disabled');
   }, [cards]);
 
-  const currentCard: DocumentFlashcard | undefined = activeCards[currentIndex] || activeCards[0];
+  const currentCard: ActiveRecallCard | undefined = activeCards[currentIndex] || activeCards[0];
 
   // Helper to parse cloze deletion or highlights
   const renderPromptContent = (prompt: string, isBackFace: boolean) => {
@@ -197,33 +460,46 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
   // Maps "Relearn" (forgot / failed recall) and "Understood" (remembered)
   const handleEvaluate = useCallback(
     (action: 'relearn' | 'understood') => {
-      if (!currentCard) return;
+      if (!currentCard || !milestone) return;
 
-      let newInterval = currentCard.interval || 1;
+      const previousInterval = currentCard.interval || 1;
+      let newInterval = previousInterval;
       let newRepetition = currentCard.repetition || 0;
       let newEF = currentCard.easinessFactor || 2.5;
+      let newStatus: 'due_today' | 'mastered' = 'due_today';
+      let nextDueDate: string;
 
       if (action === 'relearn') {
-        // SM-2 for failed recall (relearn)
+        // SM-2 for failed recall (relearn):
+        // * Set repetition count to 0.
+        // * Set next interval to 1 day.
+        // * Decrement easiness factor by 0.2 (minimum 1.3).
+        // * Mark card as "due today".
         newRepetition = 0;
         newInterval = 1;
-        newEF = Math.max(1.3, Number((newEF - 0.2).toFixed(2)));
+        newEF = Math.max(1.3, Number(((currentCard.easinessFactor || 2.5) - 0.2).toFixed(2)));
+        newStatus = 'due_today';
+        nextDueDate = new Date().toISOString(); // Due today
         setStudyStats((prev) => ({
           ...prev,
           total: prev.total + 1,
           relearned: prev.relearned + 1,
         }));
       } else {
-        // SM-2 for successful recall (understood)
-        newRepetition += 1;
+        // SM-2 for successful recall (understood):
+        // * Increment repetition count by 1.
+        // * If repetition is 1, interval = 1 day; if 2, interval = 6 days; if > 2, interval = Math.round(previousInterval * easinessFactor).
+        // * Mark card as "mastered".
+        newRepetition = (currentCard.repetition || 0) + 1;
         if (newRepetition === 1) {
           newInterval = 1;
         } else if (newRepetition === 2) {
           newInterval = 6;
         } else {
-          newInterval = Math.round(newInterval * newEF);
+          newInterval = Math.round(previousInterval * (currentCard.easinessFactor || 2.5));
         }
-        newEF = Math.min(2.8, Math.max(1.3, Number((newEF + 0.1).toFixed(2))));
+        newStatus = 'mastered';
+        nextDueDate = new Date(Date.now() + newInterval * 86400000).toISOString();
         setStudyStats((prev) => ({
           ...prev,
           total: prev.total + 1,
@@ -231,19 +507,40 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
         }));
       }
 
-      const nextDueDate = new Date(Date.now() + newInterval * 86400000).toISOString();
-      const updatedCard: DocumentFlashcard = {
+      const updatedCard: ActiveRecallCard = {
         ...currentCard,
         interval: newInterval,
         repetition: newRepetition,
         easinessFactor: newEF,
+        status: newStatus,
+        reviewStatus: newStatus,
+        isDueToday: newStatus === 'due_today',
         dueDate: nextDueDate,
         lastReviewed: new Date().toISOString(),
       };
 
       const updatedAll = cards.map((c) => (c.id === currentCard.id ? updatedCard : c));
       setCards(updatedAll);
-      onUpdateCards?.(section.id, updatedAll);
+      milestone.recallDeck = updatedAll;
+
+      // Persist updated card metrics back into localStorage and active chapter state
+      try {
+        localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(updatedAll));
+        if (activeChapter?.id) {
+          const stored = localStorage.getItem(`chapter_milestones_${activeChapter.id}`);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const updatedMilestones = parsed.map((m: any) =>
+              m.id === milestone.id ? { ...m, recallDeck: updatedAll, flashcards: updatedAll } : m
+            );
+            localStorage.setItem(`chapter_milestones_${activeChapter.id}`, JSON.stringify(updatedMilestones));
+          }
+        }
+      } catch (err) {
+        console.warn('[FullScreenFlashcardStudy] Failed to persist SM-2 card updates:', err);
+      }
+
+      onUpdateCards?.(milestone.id, updatedAll);
 
       // Advance to next card or trigger session completion
       setIsRevealed(false);
@@ -264,18 +561,18 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
         }
       }
     },
-    [currentCard, cards, activeCards, currentIndex, onUpdateCards, section.id]
+    [currentCard, cards, activeCards.length, currentIndex, onUpdateCards, milestone, activeChapter]
   );
 
   // Mute / Disable Card handler (Trash/Archive icon)
   const handleDisableCard = useCallback(() => {
-    if (!currentCard) return;
+    if (!currentCard || !milestone) return;
 
     const updatedAll = cards.map((c) =>
       c.id === currentCard.id ? { ...c, status: 'disabled' as const } : c
     );
     setCards(updatedAll);
-    onUpdateCards?.(section.id, updatedAll);
+    onUpdateCards?.(milestone.id, updatedAll);
     setIsRevealed(false);
 
     if (activeCards.length <= 1) {
@@ -283,14 +580,13 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
     } else if (currentIndex >= activeCards.length - 1) {
       setCurrentIndex(0);
     }
-  }, [currentCard, cards, activeCards.length, currentIndex, onUpdateCards, section.id]);
+  }, [currentCard, cards, activeCards.length, currentIndex, onUpdateCards, milestone]);
 
   // Keyboard Shortcuts Hook
   useEffect(() => {
-    if (!isOpen || sessionCompleted || activeTab !== 'practice') return;
+    if (!isOpen || sessionCompleted || activeTab !== 'practice' || isLoadingCards) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if focused on text input / textarea
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -329,35 +625,39 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, sessionCompleted, activeTab, isRevealed, handleEvaluate, onClose]);
+  }, [isOpen, sessionCompleted, activeTab, isRevealed, isLoadingCards, handleEvaluate, onClose]);
 
   // Handle AI Tutor follow-up query
   const handleSendAITutor = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userQuery.trim() || !currentCard) return;
+    if (!userQuery.trim() || !currentCard || !milestone) return;
 
     const query = userQuery.trim();
     setUserQuery('');
+
+    const targetAnswer = currentCard.back || currentCard.backAnswer || '';
+    const explanationText = currentCard.explanation || currentCard.sourceExcerpt || 'Foundational syllabus principle';
 
     setAiTutorMessages((prev) => [
       ...prev,
       { sender: 'user', text: query },
       {
         sender: 'ai',
-        text: `Here is a deep-dive breakdown of "${currentCard.backAnswer}" in ${section.title}:\n\n` +
-          `• **Concept Core**: ${currentCard.sourceContext || 'Curriculum Syllabus Model'}\n` +
-          `• **Exam Strategy**: Always verify sign conventions before performing algebraic substitutions. Draw ray diagrams with marked arrows to secure step credit.\n` +
-          `• **Memory Anchor**: Link this takeaway directly to the core principle of Section ${section.sectionNumber}.`,
+        text:
+          `Here is an analytical breakdown of "${targetAnswer}" in **${milestone.title}**:\n\n` +
+          `• **Core Mechanism**: ${explanationText}\n` +
+          `• **Exam Application**: Examiners evaluate this principle to verify whether you understand the structural cause rather than shallow keyword memorization.\n` +
+          `• **Retrieval Hook**: Link this directly to "${currentCard.front || currentCard.frontPrompt}".`,
       },
     ]);
   };
 
   const handleOpenAITutor = () => {
-    if (!showAITutor && currentCard) {
+    if (!showAITutor && currentCard && milestone) {
       setAiTutorMessages([
         {
           sender: 'ai',
-          text: `Hi! I'm your AI Assistant for **${section.title}**. Ask me to explain the derivation, provide a memory hook, or illustrate step-by-step exam strategy for: "${currentCard.backAnswer}".`,
+          text: `Hi! I'm your AI Study Assistant for **${milestone.title}**. Ask me to explain the derivation, provide a memory hook, or clarify exam strategies for: "${currentCard.back || currentCard.backAnswer}".`,
         },
       ]);
     }
@@ -367,14 +667,18 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
   // Add custom card handler
   const handleAddCustomCard = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newFront.trim() || !newBack.trim()) return;
+    if (!newFront.trim() || !newBack.trim() || !milestone) return;
 
-    const newCardItem: DocumentFlashcard = {
-      id: `fc-custom-${Date.now()}`,
-      sectionId: section.id,
+    const newCardItem: ActiveRecallCard = {
+      id: `recall-custom-${Date.now()}`,
+      sectionId: milestone.id,
+      front: newFront.trim(),
+      back: newBack.trim(),
+      explanation: newExplanation.trim() || 'Custom card added by student.',
+      sourceExcerpt: newSource.trim() || `${milestone.title} Custom Notes`,
       frontPrompt: newFront.trim(),
       backAnswer: newBack.trim(),
-      sourceContext: newSource.trim() || `Section ${section.sectionNumber}: ${section.title}`,
+      sourceContext: newSource.trim() || `${milestone.title} Custom Notes`,
       interval: 1,
       repetition: 0,
       easinessFactor: 2.5,
@@ -384,18 +688,23 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
 
     const updated = [...cards, newCardItem];
     setCards(updated);
-    onUpdateCards?.(section.id, updated);
+    milestone.recallDeck = updated;
+    try {
+      localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(updated));
+    } catch {}
+    onUpdateCards?.(milestone.id, updated);
     setNewFront('');
     setNewBack('');
     setNewSource('');
+    setNewExplanation('');
     setIsAddingCard(false);
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !milestone) return null;
 
   // Session progress calculation
   const totalCards = activeCards.length;
-  const currentCardNumber = Math.min(currentIndex + 1, totalCards);
+  const currentCardNumber = Math.min(currentIndex + 1, Math.max(1, totalCards));
   const progressPercent = totalCards > 0 ? Math.round(((currentIndex) / totalCards) * 100) : 0;
 
   return (
@@ -404,7 +713,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
       {/* 1. HEADER BAR */}
       {/* =================================================================== */}
       <header className="h-16 px-4 sm:px-8 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between shrink-0">
-        {/* Left: Close (X) button returning to [Roadmap] */}
+        {/* Left: Close (X) button returning to [Roadmap] + Header Titles */}
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
@@ -420,24 +729,48 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
 
           <div className="h-4 w-px bg-slate-800 hidden sm:block" />
 
-          {/* Status chip: "Card X of Y in [Section Title]" */}
-          <div className="min-w-0 truncate flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full text-xs font-black bg-indigo-950/90 text-indigo-300 border border-indigo-700/80 shadow-2xs flex items-center gap-1.5 truncate">
-              <Layers className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="truncate">
-                Card {currentCardNumber} of {totalCards} in {section.title}
-              </span>
+          {/* Header Title: Render activeMilestone.title and activeChapter.title */}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-semibold text-slate-400 truncate max-w-[120px] sm:max-w-[180px]">
+              {chapterTitle}
+            </span>
+            <span className="text-slate-600 text-xs">/</span>
+            <span className="text-xs font-black text-white truncate max-w-[140px] sm:max-w-[260px]">
+              {milestone.title}
             </span>
           </div>
+
+          {/* Status chip: "Card ${currentIndex + 1} of ${activeCards.length}" */}
+          {!isLoadingCards && totalCards > 0 && (
+            <div className="hidden md:flex items-center gap-2 min-w-0">
+              <span className="px-3 py-1 rounded-full text-xs font-black bg-indigo-950/90 text-indigo-300 border border-indigo-700/80 shadow-2xs flex items-center gap-1.5 shrink-0">
+                <Layers className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>Card {currentIndex + 1} of {activeCards.length}</span>
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Right: Mode Switcher (Study vs Manage Deck) */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* Right: Re-sync Button & Mode Switcher */}
+        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+          {/* Subtle "Re-sync with Notes" button in modal header */}
+          <button
+            type="button"
+            onClick={handleRegenerateDeck}
+            disabled={isRegenerating || isLoadingCards}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+            title="Re-sync Cards: Clear cached cards and re-fetch freshly extracted cards from milestone text"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin text-purple-400' : 'text-slate-400'}`} />
+            <span className="hidden sm:inline">Re-sync with Notes</span>
+          </button>
+
+          {/* Tab Switcher (Recall Deck vs Manage Deck) */}
           <div className="flex items-center p-1 rounded-xl bg-slate-800/80 border border-slate-700/70 text-xs">
             <button
               type="button"
               onClick={() => setActiveTab('practice')}
-              className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'practice'
                   ? 'bg-indigo-600 text-white shadow-2xs font-black'
                   : 'text-slate-400 hover:text-white'
@@ -449,66 +782,91 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
             <button
               type="button"
               onClick={() => setActiveTab('edit')}
-              className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'edit'
                   ? 'bg-indigo-600 text-white shadow-2xs font-black'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Edit3 className="w-3.5 h-3.5" />
-              <span>Cards ({cards.length})</span>
+              <span>Manage ({cards.length})</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Hairline progress bar indicating session completion */}
-      {activeTab === 'practice' && !sessionCompleted && totalCards > 0 && (
-        <div className="w-full h-[2px] bg-slate-800 shrink-0 relative overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 transition-all duration-300 ease-out"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-      )}
+      {/* Progress Bar */}
+      <div className="w-full h-1 bg-slate-800">
+        <div
+          className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+          style={{ width: `${isLoadingCards ? 30 : Math.round(((currentIndex + 1) / Math.max(1, totalCards)) * 100)}%` }}
+        />
+      </div>
 
       {/* =================================================================== */}
-      {/* 2 & 3. MAIN CARD CANVAS */}
+      {/* 2. BODY CONTENT */}
       {/* =================================================================== */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 flex items-center justify-center">
-        {sessionCompleted ? (
-          /* ================================================================= */
-          /* COMPLETION VIEW */
-          /* ================================================================= */
-          <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto shadow-inner">
-              <CheckCircle2 className="w-9 h-9" />
+      <main className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-10 flex flex-col items-center justify-center relative">
+        {/* Loading Indicator when recallDeck has 0 cards */}
+        {isLoadingCards ? (
+          <div className="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-8 sm:p-10 text-center space-y-5 shadow-2xl animate-in fade-in duration-300">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-950/80 border border-indigo-700/60 text-indigo-400 mx-auto flex items-center justify-center shadow-lg">
+              <Loader2 className="w-8 h-8 animate-spin" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-base sm:text-lg font-black text-white">
+                Extracting active recall cards from milestone notes...
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Analyzing core mechanisms and principles in <span className="font-bold text-indigo-300">{milestone.title}</span> to generate targeted retrieval prompts.
+              </p>
+            </div>
+            <div className="pt-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-[11px] font-mono text-slate-300">
+                <Brain className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Chapter: {chapterTitle}</span>
+              </span>
+            </div>
+          </div>
+        ) : sessionCompleted ? (
+          /* Session Completion View */
+          <div className="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-950 border border-emerald-700/80 text-emerald-400 mx-auto flex items-center justify-center shadow-lg">
+              <CheckCircle2 className="w-8 h-8" />
             </div>
 
-            <div className="space-y-1.5">
-              <h2 className="text-xl sm:text-2xl font-black text-white">Recall Deck Complete!</h2>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                All cards in Section {section.sectionNumber} ({section.title}) have been scheduled into SM-2 spaced repetition.
+            <div className="space-y-2">
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                Recall Session Complete!
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-400">
+                You tested all cards for <span className="text-white font-bold">{milestone.title}</span>.
               </p>
             </div>
 
-            {/* Stats Breakdown */}
-            <div className="grid grid-cols-2 gap-3 py-2">
-              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-800/60 text-center">
+            {/* Performance Stats */}
+            <div className="grid grid-cols-3 gap-2.5 p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+              <div className="p-2 text-center">
+                <div className="text-2xl font-black text-white">{studyStats.total}</div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Reviewed
+                </div>
+              </div>
+              <div className="p-2 text-center border-x border-slate-800">
                 <div className="text-2xl font-black text-emerald-400">{studyStats.understood}</div>
-                <div className="text-[11px] font-bold text-emerald-300/80 uppercase tracking-wider">
+                <div className="text-[10px] font-bold text-emerald-400/80 uppercase tracking-wider">
                   Understood
                 </div>
               </div>
-              <div className="p-3.5 rounded-2xl bg-rose-950/40 border border-rose-800/60 text-center">
+              <div className="p-2 text-center">
                 <div className="text-2xl font-black text-rose-400">{studyStats.relearned}</div>
-                <div className="text-[11px] font-bold text-rose-300/80 uppercase tracking-wider">
+                <div className="text-[10px] font-bold text-rose-400/80 uppercase tracking-wider">
                   Relearned
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
               <button
                 type="button"
                 onClick={() => {
@@ -517,116 +875,107 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
                   setSessionCompleted(false);
                   setStudyStats({ total: 0, understood: 0, relearned: 0 });
                 }}
-                className="flex-1 py-3 px-4 rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-4 h-4" />
-                <span>Practice Again</span>
+                <span>Study Again</span>
               </button>
-
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black transition flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                className="w-full py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
               >
-                <Check className="w-4 h-4" />
                 <span>Return to Roadmap</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         ) : activeTab === 'edit' ? (
-          /* ================================================================= */
-          /* CARD MANAGER / DECK EDITOR VIEW */
-          /* ================================================================= */
+          /* Editor Mode */
           <div className="max-w-2xl w-full space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
-                <h2 className="text-base font-black text-white">Recall Deck Management</h2>
-                <p className="text-xs text-slate-400">Section {section.sectionNumber}: {section.title}</p>
+                <h3 className="text-base font-bold text-white">Manage Recall Deck</h3>
+                <p className="text-xs text-slate-400">
+                  {cards.length} cards in {milestone.title}
+                </p>
               </div>
 
-              {!isAddingCard && (
-                <button
-                  type="button"
-                  onClick={() => setIsAddingCard(true)}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>New Card</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setIsAddingCard(!isAddingCard)}
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Card</span>
+              </button>
             </div>
 
             {/* Add Card Form */}
             {isAddingCard && (
               <form
                 onSubmit={handleAddCustomCard}
-                className="p-5 rounded-2xl bg-slate-900 border border-indigo-500/40 space-y-3.5 animate-in fade-in duration-150"
+                className="p-5 rounded-2xl bg-slate-900 border border-indigo-700/60 space-y-4 animate-in slide-in-from-top-2 duration-200"
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase tracking-wider text-indigo-400">
-                    Add Spaced-Repetition Card
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingCard(false)}
-                    className="text-slate-400 hover:text-white"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Front Retrieval Prompt (use <code className="text-indigo-400">{'{{c1::answer}}'}</code> for cloze blanks)
-                  </label>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Front Prompt</label>
                   <textarea
                     rows={2}
                     value={newFront}
                     onChange={(e) => setNewFront(e.target.value)}
-                    placeholder="e.g. Concave mirrors form a {{c1::virtual, magnified}} image when object is within focal length."
-                    className="w-full text-xs p-3 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
+                    placeholder="Enter active recall prompt or fill-in-the-blank question..."
+                    className="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
                     required
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Target Answer
-                  </label>
-                  <input
-                    type="text"
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Back Target Answer</label>
+                  <textarea
+                    rows={2}
                     value={newBack}
                     onChange={(e) => setNewBack(e.target.value)}
-                    placeholder="e.g. Virtual and Magnified"
-                    className="w-full text-xs p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+                    placeholder="Enter the model target answer..."
+                    className="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
                     required
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    Source Citation & Context
-                  </label>
-                  <input
-                    type="text"
-                    value={newSource}
-                    onChange={(e) => setNewSource(e.target.value)}
-                    placeholder="e.g. NCERT Page 164 • Ray Diagram Case 6"
-                    className="w-full text-xs p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300">Explanation & Context (Optional)</label>
+                    <input
+                      type="text"
+                      value={newExplanation}
+                      onChange={(e) => setNewExplanation(e.target.value)}
+                      placeholder="Why this principle holds..."
+                      className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300">Source Excerpt (Optional)</label>
+                    <input
+                      type="text"
+                      value={newSource}
+                      onChange={(e) => setNewSource(e.target.value)}
+                      placeholder="e.g. Page 12, Theorem 3.1"
+                      className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
                 </div>
 
-                <div className="flex justify-end gap-2 pt-1">
+                <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
                     onClick={() => setIsAddingCard(false)}
-                    className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl"
+                    className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs"
                   >
                     Save Card
                   </button>
@@ -650,18 +999,23 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
                       <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-800">
                         Card #{idx + 1}
                       </span>
-                      {card.sourceContext && (
+                      {(card.sourceExcerpt || card.sourceContext) && (
                         <span className="text-[11px] text-slate-500 truncate">
-                          {card.sourceContext}
+                          {card.sourceExcerpt || card.sourceContext}
                         </span>
                       )}
                     </div>
                     <p className="text-xs font-medium text-slate-200">
-                      {card.frontPrompt}
+                      {card.front || card.frontPrompt}
                     </p>
                     <p className="text-xs font-bold text-emerald-400">
-                      Answer: {card.backAnswer}
+                      Target: {card.back || card.backAnswer}
                     </p>
+                    {card.explanation && (
+                      <p className="text-[11px] text-slate-400">
+                        {card.explanation}
+                      </p>
+                    )}
                   </div>
 
                   <button
@@ -669,11 +1023,15 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
                     onClick={() => {
                       const updated = cards.map((c) =>
                         c.id === card.id
-                          ? { ...c, status: c.status === 'disabled' ? 'active' : 'disabled' }
+                          ? { ...c, status: (c.status === 'disabled' ? 'active' : 'disabled') as 'active' | 'disabled' }
                           : c
                       );
-                      setCards(updated as DocumentFlashcard[]);
-                      onUpdateCards?.(section.id, updated as DocumentFlashcard[]);
+                      setCards(updated);
+                      milestone.recallDeck = updated;
+                      try {
+                        localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(updated));
+                      } catch {}
+                      onUpdateCards?.(milestone.id, updated);
                     }}
                     className="p-2 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition"
                     title={card.status === 'disabled' ? 'Re-enable card' : 'Disable card'}
@@ -689,92 +1047,92 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
           /* CARD CANVAS: ELEVATED, MINIMALIST CENTRAL CARD WITH REVEAL */
           /* ================================================================= */
           <div className="max-w-2xl w-full flex flex-col items-center">
-            {/* Elevated, minimalist central card with smooth transition */}
+            {/* Elevated Central Card */}
             <div className="w-full bg-slate-900/90 border border-slate-800/90 rounded-3xl p-6 sm:p-9 shadow-2xl flex flex-col justify-between min-h-[400px] sm:min-h-[460px] relative transition-all duration-300 hover:border-slate-700/80">
               {/* Concept Breadcrumb at top of the card */}
               <div className="flex items-center justify-between gap-3 pb-4 border-b border-slate-800/70">
-                <nav aria-label="Concept Breadcrumb" className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-indigo-950/70 border border-indigo-800/60 text-indigo-300 text-[11px] font-bold tracking-tight">
-                  <span className="text-indigo-400 font-black">{subjectName}</span>
-                  <ChevronRight className="w-3 h-3 text-indigo-500 shrink-0" />
-                  <span className="truncate max-w-[140px] sm:max-w-[200px]">{chapterName}</span>
-                  <ChevronRight className="w-3 h-3 text-indigo-500 shrink-0" />
-                  <span className="text-indigo-200 font-black truncate max-w-[120px] sm:max-w-[180px]">
-                    {section.title}
-                  </span>
+                <nav aria-label="Concept Breadcrumb" className="inline-flex items-center gap-1.5 text-slate-400 text-xs font-medium tracking-tight">
+                  <span className="text-slate-500 font-bold">@</span>
+                  <span className="text-slate-300 font-semibold">{subjectName || 'SST'}</span>
+                  <span className="text-slate-600">{'>'}</span>
+                  <span className="truncate max-w-[200px] text-slate-200 font-bold">{chapterTitle}</span>
                 </nav>
 
-                {/* SM-2 Metadata pill */}
-                <div className="text-[10px] font-mono text-slate-400 hidden sm:flex items-center gap-2">
-                  <span>Rep: {currentCard?.repetition || 0}</span>
-                  <span>•</span>
-                  <span>Interval: {currentCard?.interval || 1}d</span>
-                  <span>•</span>
-                  <span>EF: {currentCard?.easinessFactor || 2.5}</span>
+                {/* Card Counter: Dynamically compute Card ${currentIndex + 1} of ${activeCards.length} */}
+                <div className="text-[11px] font-bold text-indigo-300 bg-indigo-950/60 border border-indigo-800/50 px-2.5 py-1 rounded-lg">
+                  Card {currentIndex + 1} of {activeCards.length}
                 </div>
               </div>
 
-              {/* CARD BODY: FRONT OR REVEALED BACK FACE */}
-              <div className="my-auto py-6 space-y-6">
-                {/* Front Face: Retrieval Prompt or Fill-in-the-blank text */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>{isRevealed ? 'Retrieval Prompt' : 'Active Recall Prompt'}</span>
-                    </span>
+              {/* CARD BODY: REMNOTE PARENT-CHILD BULLET HIERARCHY */}
+              <div className="my-auto py-6 space-y-6 text-left w-full">
+                {/* 1. Bold Parent Concept Bullet Header */}
+                <div className="flex items-start gap-2.5 text-base sm:text-lg font-bold text-white leading-snug">
+                  <span className="text-slate-400 font-black text-xl leading-none">•</span>
+                  <span>{currentCard?.parentConcept || milestone.title}</span>
+                </div>
 
-                    {!isRevealed && (
-                      <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                        <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-slate-800 border border-slate-700 rounded text-slate-300">
-                          Space
-                        </kbd>
-                        <span>to check recall</span>
+                {/* 2. Atomic Child Question with Inline Marker or Answer */}
+                <div className="pl-5 space-y-2">
+                  <div className="flex flex-wrap items-baseline gap-2 text-sm sm:text-base font-normal text-slate-100 leading-relaxed">
+                    <span className="text-slate-400 font-bold">•</span>
+                    <span className="font-medium text-slate-200">
+                      {currentCard?.promptQuestion || currentCard?.front || currentCard?.frontPrompt || ''}
+                    </span>
+                    <span className="text-slate-400 font-bold select-none">
+                      {currentCard?.cardType === 'list' ? '↓' : '→'}
+                    </span>
+                    {!isRevealed ? (
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-400/40 text-xs font-bold shadow-xs animate-pulse">
+                        ?
                       </span>
+                    ) : (
+                      currentCard?.cardType !== 'list' && (
+                        <span className="font-semibold text-emerald-300 bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-800/60 animate-in fade-in duration-150">
+                          {currentCard?.inlineAnswer || currentCard?.answer || currentCard?.back || currentCard?.backAnswer}
+                        </span>
+                      )
                     )}
                   </div>
 
-                  <div className="text-base sm:text-lg font-medium leading-relaxed">
-                    {currentCard && renderPromptContent(currentCard.frontPrompt, isRevealed)}
-                  </div>
+                  {/* List Type Items when Revealed */}
+                  {isRevealed && currentCard?.cardType === 'list' && Array.isArray(currentCard?.listItems) && currentCard.listItems.length > 0 && (
+                    <ol className="pl-6 pt-1 list-decimal space-y-1 text-sm text-emerald-300 font-semibold animate-in fade-in duration-200">
+                      {currentCard.listItems.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ol>
+                  )}
                 </div>
 
                 {/* ========================================================= */}
-                {/* 3. REVEALED STATE (BACK FACE) */}
+                {/* 3. REVEALED STATE: EXPLANATION & SOURCES CITATION */}
                 {/* ========================================================= */}
                 {isRevealed && currentCard && (
-                  <div className="pt-5 border-t border-slate-800/80 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                    {/* Model Explanation with Source Citation */}
-                    <div className="p-4 sm:p-5 rounded-2xl bg-emerald-950/40 border border-emerald-800/80 space-y-2 shadow-inner">
-                      <div className="flex items-center justify-between">
-                        <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Model Explanation</span>
+                  <div className="pt-4 border-t border-slate-800/80 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                    {/* Explanation Box */}
+                    {currentCard.explanation && (
+                      <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/70 border border-slate-700/80 space-y-1.5 text-left shadow-xs">
+                        <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <span>Explanation</span>
                         </div>
-
-                        {/* Source citation */}
-                        {currentCard.sourceContext && (
-                          <div className="text-[10px] font-mono text-emerald-300/80 flex items-center gap-1 truncate max-w-[240px]">
-                            <BookOpen className="w-3 h-3 text-emerald-400 shrink-0" />
-                            <span className="truncate">{currentCard.sourceContext}</span>
-                          </div>
-                        )}
+                        <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal">
+                          {currentCard.explanation}
+                        </p>
                       </div>
+                    )}
 
-                      <div className="text-base sm:text-lg font-black text-white leading-snug">
-                        {currentCard.backAnswer}
+                    {/* Sources Verbatim Citation Box */}
+                    {(currentCard.sourceQuote || currentCard.sourceExcerpt || currentCard.sourceContext) && (
+                      <div className="p-3.5 sm:p-4 rounded-xl bg-slate-800/50 border border-slate-700/60 text-left space-y-1 shadow-xs">
+                        <div className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+                          <span>Sources</span>
+                        </div>
+                        <p className="text-xs text-slate-300 italic font-serif leading-relaxed">
+                          "{currentCard.sourceQuote || currentCard.sourceExcerpt || currentCard.sourceContext}"
+                        </p>
                       </div>
-                    </div>
-
-                    {/* Dedicated "Why It Matters" Takeaway Box */}
-                    <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-800/70 space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-indigo-400 text-[10px] font-black uppercase tracking-wider">
-                        <Lightbulb className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Why It Matters</span>
-                      </div>
-                      <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-normal">
-                        Examiners test this specific principle to differentiate rote learners from students who grasp foundational mechanics. Remembering sign conventions and ray orientation prevents costly point deductions in multi-step questions.
-                      </p>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -782,14 +1140,14 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
               {/* CARD BOTTOM ACTION CONTROLS */}
               <div className="pt-5 border-t border-slate-800/70 flex flex-col gap-3">
                 {!isRevealed ? (
-                  /* FRONT FACE ACTION: "Check Your Recall" (Hotkey: Space / Enter) */
+                  /* FRONT FACE ACTION: "I Tried to Recall It - Show Answer" (Hotkey: Space / Enter) */
                   <button
                     type="button"
                     onClick={() => setIsRevealed(true)}
                     className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm sm:text-base transition cursor-pointer flex items-center justify-center gap-3 shadow-xl hover:shadow-indigo-500/20 active:scale-[0.99]"
                   >
                     <Eye className="w-5 h-5 text-indigo-200" />
-                    <span>Check Your Recall</span>
+                    <span>I Tried to Recall It - Show Answer</span>
                     <div className="hidden sm:flex items-center gap-1">
                       <kbd className="px-2 py-0.5 text-xs font-mono bg-indigo-700/80 border border-indigo-400/40 rounded-lg text-indigo-100">
                         Space
@@ -801,171 +1159,109 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
                     </div>
                   </button>
                 ) : (
-                  /* REVEALED HORIZONTAL ACTION BAR */
+                  /* REVEALED HORIZONTAL ACTION BAR: Disable Card, Forgot, Remembered */
                   <div className="space-y-3">
                     <div className="flex items-center gap-2.5">
-                      {/* a) Left utility button: "Mute / Disable Card" (Trash/Archive icon) */}
+                      {/* Left utility button: "Disable Card" */}
                       <button
                         type="button"
                         onClick={handleDisableCard}
-                        className="p-3.5 rounded-2xl border border-slate-700/80 bg-slate-800/60 hover:bg-rose-950/40 hover:border-rose-800 text-slate-400 hover:text-rose-400 transition cursor-pointer"
-                        title="Mute / Disable Card (Removes from future review queue)"
+                        className="py-3 px-4 rounded-xl border border-slate-700/80 bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                        title="Disable Card (Removes from future review queue)"
                       >
                         <VolumeX className="w-4 h-4" />
+                        <span className="hidden sm:inline">Disable Card</span>
                       </button>
 
-                      {/* b) Action button 1: "Relearn" (soft rose/red with subtle ring, Hotkey: '1' or 'J') */}
+                      {/* Action button 1: "Forgot" (red icon, Hotkey: '1' or 'J') */}
                       <button
                         type="button"
                         onClick={() => handleEvaluate('relearn')}
-                        className="flex-1 py-3.5 px-4 rounded-2xl border border-rose-500/50 ring-2 ring-rose-500/20 bg-rose-950/40 hover:bg-rose-900/60 text-rose-200 font-black text-xs sm:text-sm transition cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1.5 shadow-md active:scale-[0.99]"
+                        className="flex-1 py-3 px-4 rounded-xl border border-rose-500/50 ring-2 ring-rose-500/20 bg-rose-950/40 hover:bg-rose-900/60 text-rose-200 font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-md active:scale-[0.99]"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <RotateCcw className="w-4 h-4 text-rose-400" />
-                          <span>Relearn</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] font-mono text-rose-300/80 font-normal">
-                          <span>(1 or J)</span>
-                          <span>•</span>
-                          <span>1d</span>
-                        </div>
+                        <RotateCcw className="w-4 h-4 text-rose-400" />
+                        <span>Forgot</span>
+                        <span className="text-[10px] font-mono text-rose-300/80 font-normal hidden sm:inline">(1 or J)</span>
                       </button>
 
-                      {/* c) Action button 2: "Understood" (clean emerald green, Hotkey: '2' or 'K') */}
+                      {/* Action button 2: "Remembered" (golden/green icon, Hotkey: '2' or 'K') */}
                       <button
                         type="button"
                         onClick={() => handleEvaluate('understood')}
-                        className="flex-1 py-3.5 px-4 rounded-2xl border border-emerald-500/50 ring-2 ring-emerald-500/20 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-200 font-black text-xs sm:text-sm transition cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1.5 shadow-md active:scale-[0.99]"
+                        className="flex-1 py-3 px-4 rounded-xl border border-emerald-500/50 ring-2 ring-emerald-500/20 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-200 font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-md active:scale-[0.99]"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <Check className="w-4 h-4 text-emerald-400 stroke-[3]" />
-                          <span>Understood</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] font-mono text-emerald-300/80 font-normal">
-                          <span>(2 or K)</span>
-                          <span>•</span>
-                          <span>+interval</span>
-                        </div>
+                        <Check className="w-4 h-4 text-emerald-400 stroke-[3]" />
+                        <span>Remembered</span>
+                        <span className="text-[10px] font-mono text-emerald-300/80 font-normal hidden sm:inline">(2 or K)</span>
                       </button>
 
-                      {/* d) Right utility button: "Deep Dive with AI Assistant" */}
+                      {/* Right utility button: "Deep Dive with AI Assistant" */}
                       <button
                         type="button"
                         onClick={handleOpenAITutor}
-                        className="p-3.5 rounded-2xl border border-indigo-700/70 bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 hover:text-white transition cursor-pointer"
+                        className="p-3 rounded-xl border border-indigo-700/70 bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 hover:text-white transition cursor-pointer"
                         title="Deep Dive with AI Assistant"
                       >
                         <Brain className="w-4 h-4 text-indigo-400" />
                       </button>
                     </div>
-
-                    {/* Bottom AI Deep Dive pill bar */}
-                    <button
-                      type="button"
-                      onClick={handleOpenAITutor}
-                      className="w-full py-2.5 px-4 rounded-xl border border-indigo-700/60 bg-indigo-950/30 hover:bg-indigo-950/60 text-indigo-300 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Brain className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Deep Dive with AI Assistant</span>
-                    </button>
                   </div>
                 )}
               </div>
             </div>
+
+            {/* AI Assistant Drawer Modal */}
+            {showAITutor && (
+              <div className="w-full mt-4 p-5 rounded-3xl bg-slate-900 border border-indigo-700/80 shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-black text-white">AI Conceptual Deconstruction</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAITutor(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="py-3 max-h-48 overflow-y-auto space-y-2.5 text-xs">
+                  {aiTutorMessages.map((msg, i) => (
+                    <div
+                      key={i}
+                      className={`p-3 rounded-xl leading-relaxed whitespace-pre-wrap ${
+                        msg.sender === 'user'
+                          ? 'bg-indigo-950/60 border border-indigo-800/80 text-indigo-200 ml-4'
+                          : 'bg-slate-950 border border-slate-800 text-slate-300 mr-4'
+                      }`}
+                    >
+                      {msg.text}
+                    </div>
+                  ))}
+                </div>
+
+                <form onSubmit={handleSendAITutor} className="flex gap-2 pt-2 border-t border-slate-800">
+                  <input
+                    type="text"
+                    value={userQuery}
+                    onChange={(e) => setUserQuery(e.target.value)}
+                    placeholder="Ask about this derivation or model takeaway..."
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         )}
       </main>
-
-      {/* =================================================================== */}
-      {/* 4. AI ASSISTANT DEEP DIVE SLIDE-OVER DRAWER */}
-      {/* =================================================================== */}
-      {showAITutor && (
-        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
-          {/* Header */}
-          <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-indigo-900/50 border border-indigo-700/60 text-indigo-400 flex items-center justify-center">
-                <Brain className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-xs sm:text-sm font-black text-white">AI Assistant Deep Dive</h3>
-                <p className="text-[10px] text-slate-400">Contextual flashcard explanations & mnemonics</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowAITutor(false)}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Conversation history */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-3 text-xs leading-relaxed">
-            {aiTutorMessages.map((msg, i) => (
-              <div
-                key={i}
-                className={`p-3.5 rounded-2xl max-w-[90%] whitespace-pre-line ${
-                  msg.sender === 'user'
-                    ? 'ml-auto bg-indigo-600 text-white font-medium'
-                    : 'mr-auto bg-slate-800 border border-slate-700 text-slate-200'
-                }`}
-              >
-                {msg.text}
-              </div>
-            ))}
-          </div>
-
-          {/* Prompt quick suggestions */}
-          <div className="p-2 border-t border-slate-800 bg-slate-950/60 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setUserQuery('Can you give me an easy mnemonic or memory hook for this?');
-              }}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-indigo-300 cursor-pointer"
-            >
-              💡 Memory hook
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUserQuery('Why is this formula derived this way?');
-              }}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-indigo-300 cursor-pointer"
-            >
-              📐 Step-by-step derivation
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUserQuery('What common mistakes do students make on exam day for this?');
-              }}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-indigo-300 cursor-pointer"
-            >
-              ⚠️ Exam traps
-            </button>
-          </div>
-
-          {/* Input Form */}
-          <form onSubmit={handleSendAITutor} className="p-3 border-t border-slate-800 flex gap-2">
-            <input
-              type="text"
-              value={userQuery}
-              onChange={(e) => setUserQuery(e.target.value)}
-              placeholder="Ask a question about this card..."
-              className="flex-1 text-xs p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
-            />
-            <button
-              type="submit"
-              className="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer"
-            >
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </form>
-        </div>
-      )}
     </div>
   );
 };

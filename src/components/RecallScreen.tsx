@@ -52,7 +52,7 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
   const handleAddCard = onOpenAddCard || onAddCard || (() => {});
   const handleAddDeck = onOpenAddDeck || onAddDeck || (() => {});
 
-  const [showSubjectBrowser, setShowSubjectBrowser] = useState(false);
+  const [showSubjectBrowser, setShowSubjectBrowser] = useState(true);
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
 
   // Due cards calculation (using the underlying spaced repetition scheduler)
@@ -270,14 +270,28 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
                 return (
                   <div
                     key={deck.id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-100 dark:border-slate-800 transition"
                   >
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 dark:text-white">
-                        {deck.title}
+                    <div className="space-y-0.5 max-w-[75%]">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          {deck.title}
+                        </span>
+                        {deck.id.startsWith('deck-learn-') && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60">
+                            Learn Tab
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-slate-400">
-                        {deck.subject} • {deckCards.length} cards {deckDueCount > 0 && `(${deckDueCount} due)`}
+                        {deck.subject} • {deckCards.length} cards{' '}
+                        {deckDueCount > 0 ? (
+                          <span className="text-rose-500 dark:text-rose-400 font-bold">
+                            ({deckDueCount} due)
+                          </span>
+                        ) : (
+                          <span className="text-emerald-500 font-semibold">(up to date)</span>
+                        )}
                       </div>
                     </div>
 
@@ -285,9 +299,9 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
                       <button
                         onClick={() => handleStart(deck.id)}
                         disabled={deckCards.length === 0}
-                        className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold transition cursor-pointer"
+                        className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-bold transition cursor-pointer shadow-2xs"
                       >
-                        Review
+                        {deckDueCount > 0 ? 'Review' : 'Practice'}
                       </button>
                     </div>
                   </div>
