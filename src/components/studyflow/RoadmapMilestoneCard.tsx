@@ -184,17 +184,25 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
     ).length;
 
     const maxInterval = Math.max(...activeCards.map((c: any) => c.interval || 1), 3);
-    const cardsDueCount = activeCards.length;
+    // Count cards that have actually been reviewed with active memory repetition
+    const reviewedCards = activeCards.filter(
+      (c: any) =>
+        (typeof c.repetition === 'number' && c.repetition > 0) ||
+        (typeof c.interval === 'number' && c.interval > 1) ||
+        c.status === 'mastered'
+    ).length;
 
-    // RecallDeckScore (0 - 100) based on mature cards and intervals
+    // RecallDeckScore (0 - 100) based on mature cards and reviewed cards
     let scorePct = 0;
-    if (activeCards.length > 0) {
+    if (activeCards.length > 0 && reviewedCards > 0) {
       scorePct = Math.min(
         100,
-        Math.round(((matureCards + (activeCards.length - matureCards) * 0.4) / activeCards.length) * 100)
+        Math.round(((matureCards + (reviewedCards - matureCards) * 0.5) / activeCards.length) * 100)
       );
+    } else if (section.completionRate && section.completionRate > 0) {
+      scorePct = Math.min(100, section.completionRate);
     } else {
-      scorePct = Math.min(100, section.completionRate || 40);
+      scorePct = 0;
     }
 
     return { totalCards, activeCardsCount: activeCards.length, matureCards, maxInterval, cardsDueCount, scorePct };
@@ -343,141 +351,120 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
           {isGeneratingDetail && (
             <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800/80 flex items-center gap-2 text-xs font-bold text-indigo-700 dark:text-indigo-300">
               <Sparkles className="w-4 h-4 animate-spin text-indigo-600 dark:text-indigo-400 shrink-0" />
-              <span>Generating custom checkpoint derivations & active recall cards...</span>
+              <span>Generating concept checkpoints and active recall deck...</span>
             </div>
           )}
 
           {/* --------------------------------------------------------------- */}
-          {/* MODULE 1 (READ): CONCEPT NOTES & SUMMARY BANNER */}
-          {/* Neat horizontal banner / button */}
+          {/* 1. READ SUMMARY & NOTES */}
           {/* --------------------------------------------------------------- */}
           <div className="w-full p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-indigo-200/80 dark:border-indigo-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-300 dark:hover:border-indigo-700 transition">
-            <div className="space-y-1 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-400 flex items-center gap-1.5">
-                  <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>📖 Module 1: Read Summary & Notes</span>
+            <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+                <div className="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200/70 dark:border-indigo-800/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <BookOpen className="w-3.5 h-3.5" />
+                </div>
+                <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap">
+                  Read Summary & Notes
                 </span>
-                {isSummaryRead ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-0.5">
-                    <Check className="w-3 h-3" /> Read Complete
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                    Not Read
-                  </span>
-                )}
               </div>
 
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                Compact Overview • Detailed Deep-Dive • Source Document
-              </p>
+              {isSummaryRead ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 whitespace-nowrap shrink-0">
+                  <Check className="w-3 h-3" /> Read Complete
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 whitespace-nowrap shrink-0">
+                  Not Read
+                </span>
+              )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => onRead(section)}
-              className="px-4 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-black transition cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-2xs group"
-            >
-              <span>Read Notes</span>
-              <ArrowRight className="w-3.5 h-3.5 text-indigo-500 group-hover:translate-x-0.5 transition" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => onRead(section)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 shrink-0 shadow-2xs group whitespace-nowrap"
+              >
+                <span>Read Notes</span>
+                <ArrowRight className="w-3.5 h-3.5 text-indigo-500 group-hover:translate-x-0.5 transition" />
+              </button>
+            </div>
           </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* MODULE 2 (SYNTHESIZE & EXPLAIN): CONCEPTUAL CHECKPOINTS CARD */}
-          {/* Full-width card with Understood badge & multimodal CTA */}
+          {/* 2. CONCEPT CHECK */}
           {/* --------------------------------------------------------------- */}
-          <div className="w-full p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-emerald-200 dark:border-emerald-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1.5 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-                  <Target className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>🎯 Module 2: Conceptual Checkpoints</span>
-                </span>
-
-                {/* Badge: "X of Y Understood" or "Not Started" */}
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
-                    checkpointsData.understoodCount > 0
-                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  {checkpointsData.isStarted
-                    ? `${checkpointsData.understoodCount} of ${checkpointsData.total} Understood`
-                    : 'Not Started'}
-                </span>
-
-                <span className="text-[10px] font-bold text-slate-400">
-                  • 40% Weight
+          <div className="w-full p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-emerald-200 dark:border-emerald-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-emerald-300 dark:hover:border-emerald-700 transition">
+            <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200/70 dark:border-emerald-800/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                  <Target className="w-3.5 h-3.5" />
+                </div>
+                <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap">
+                  Concept Check
                 </span>
               </div>
 
-              <h4 className="text-base font-black text-slate-900 dark:text-white">
-                Open-Ended Derivations & Reasoning Synthesis
-              </h4>
+              {/* Badge: "X of Y Understood" or "Not Started" */}
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border whitespace-nowrap shrink-0 ${
+                  checkpointsData.understoodCount > 0
+                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                {checkpointsData.isStarted
+                  ? `${checkpointsData.understoodCount} of ${checkpointsData.total} Understood`
+                  : 'Not Started'}
+              </span>
 
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                Open-ended derivations, reasoning synthesis & benchmark self-evaluations
-              </p>
+              <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap shrink-0">
+                • 40% Weight
+              </span>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleStartCheckpoints}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm hover:shadow-emerald-500/20"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm hover:shadow-emerald-500/20 whitespace-nowrap shrink-0"
               >
                 <Sparkles className="w-3.5 h-3.5 text-emerald-200" />
-                <span>Open Checkpoints</span>
+                <span>Open Concept Check</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
 
           {/* --------------------------------------------------------------- */}
-          {/* MODULE 3 (RETAIN & REVIEW): ACTIVE RECALL DECK CARD */}
-          {/* Full-width card with RemNote-style SM-2 Spaced Repetition */}
+          {/* 3. ACTIVE RECALL DECK */}
           {/* --------------------------------------------------------------- */}
-          <div className="w-full p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-purple-200 dark:border-purple-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1.5 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-400 flex items-center gap-1.5">
-                  <Brain className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  <span>🧠 Module 3: Active Recall Deck</span>
-                </span>
-
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                  SM-2 Spaced Repetition
-                </span>
-
-                <span className="text-[10px] font-bold text-slate-400">
-                  • 60% Weight
+          <div className="w-full p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-purple-200 dark:border-purple-800/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-purple-300 dark:hover:border-purple-700 transition">
+            <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-0">
+              <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+                <div className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-950/70 border border-purple-200/70 dark:border-purple-800/60 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+                  <Brain className="w-3.5 h-3.5" />
+                </div>
+                <span className="text-sm font-bold text-slate-900 dark:text-white tracking-tight whitespace-nowrap">
+                  Active Recall Deck
                 </span>
               </div>
 
-              <h4 className="text-base font-black text-slate-900 dark:text-white">
-                Spaced Repetition & Breadcrumb Flashcards
-              </h4>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800 whitespace-nowrap shrink-0">
+                {recallDeckData.totalCards} Cards Due
+              </span>
 
-              {/* Subtext: "[X] Cards Due for Review • Next interval: [Y] days" */}
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                <span className="font-bold text-purple-700 dark:text-purple-400">
-                  {recallDeckData.totalCards} Cards Due for Review
-                </span>
-                <span>•</span>
-                <span className="text-slate-500 dark:text-slate-400">
-                  Next interval: {recallDeckData.maxInterval} days
-                </span>
-              </div>
+              <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap shrink-0">
+                • 60% Weight
+              </span>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
               <button
                 type="button"
                 onClick={handleLaunchRecall}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm hover:shadow-purple-500/20"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm hover:shadow-purple-500/20 whitespace-nowrap shrink-0"
               >
                 <Layers className="w-3.5 h-3.5 text-purple-200" />
                 <span>Launch Recall Deck</span>

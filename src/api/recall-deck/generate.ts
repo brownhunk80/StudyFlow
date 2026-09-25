@@ -232,9 +232,9 @@ Extract exactly ${cardCount} high-yield active-recall flashcards strictly matchi
 
   // Supported flash models with multi-model fallback cascade
   const candidateModels = [
-    'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.8-flash',
   ];
 
   let response: any = null;
@@ -263,15 +263,8 @@ Extract exactly ${cardCount} high-yield active-recall flashcards strictly matchi
       }
     } catch (err: any) {
       lastError = err;
-      const status = err?.status || err?.code || err?.error?.code;
-      let errMsg = `${err?.message || ''}`;
-      try {
-        errMsg += ' ' + JSON.stringify(err);
-      } catch {
-        // ignore
-      }
-
-      console.warn(`[generateRecallDeck] Model ${model} returned error, trying next fallback...`, errMsg);
+      const status = err?.status || err?.code || (err?.message?.includes('503') ? 503 : 'error');
+      console.log(`[generateRecallDeck] Model ${model} unavailable (${status}), trying fallback model...`);
       await new Promise((res) => setTimeout(res, 250));
       continue;
     }

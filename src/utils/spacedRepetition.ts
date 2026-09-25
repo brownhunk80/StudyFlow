@@ -82,8 +82,15 @@ export function isCardDue(card: Flashcard): boolean {
   if (!card.dueDate) return true;
   const due = new Date(card.dueDate);
   const now = new Date();
-  // Due if date is past or today
-  return due <= now;
+  if (isNaN(due.getTime())) return true;
+  if (due <= now) return true;
+
+  // Also due if scheduled for today
+  return (
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate()
+  );
 }
 
 /**

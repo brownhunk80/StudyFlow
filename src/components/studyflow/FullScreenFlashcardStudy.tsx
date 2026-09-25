@@ -526,6 +526,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
       // Persist updated card metrics back into localStorage and active chapter state
       try {
         localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(updatedAll));
+        localStorage.setItem(`milestone_recall_deck_${milestone.id}`, JSON.stringify(updatedAll));
         if (activeChapter?.id) {
           const stored = localStorage.getItem(`chapter_milestones_${activeChapter.id}`);
           if (stored) {
@@ -536,6 +537,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
             localStorage.setItem(`chapter_milestones_${activeChapter.id}`, JSON.stringify(updatedMilestones));
           }
         }
+        window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
       } catch (err) {
         console.warn('[FullScreenFlashcardStudy] Failed to persist SM-2 card updates:', err);
       }

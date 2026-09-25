@@ -117,9 +117,9 @@ ${excerpt ? `Reference Material Excerpt:\n---\n${excerpt.slice(0, 15000)}\n---` 
 Generate the detailed summary, check learning questions, and active recall deck for this single milestone.`;
 
     const candidateModels = [
-      'gemini-3.8-flash',
       'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.8-flash',
     ];
 
     for (const model of candidateModels) {
@@ -140,10 +140,10 @@ Generate the detailed summary, check learning questions, and active recall deck 
           },
         });
 
-        // Crucial: Attach a catch handler to apiPromise immediately to prevent unhandled rejection
+        // Attach a silent catch handler to apiPromise immediately to prevent unhandled rejection
         // if timeoutPromise rejects the race before apiPromise resolves or rejects in the background
-        apiPromise.catch((err) => {
-          console.warn(`[GenerateMilestoneContent] Background apiPromise caught for ${model}:`, err?.message || err);
+        apiPromise.catch(() => {
+          // Handled via Promise.race or discarded safely on timeout
         });
 
         const response = await Promise.race([apiPromise, timeoutPromise]);
@@ -164,9 +164,10 @@ Generate the detailed summary, check learning questions, and active recall deck 
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
-        console.warn(`[GenerateMilestoneContent] Model ${model} failed:`, err?.message || err);
+        const errStatus = err?.status || err?.code || (err?.message?.includes('503') ? 503 : 'error');
+        console.log(`[GenerateMilestoneContent] Model ${model} unavailable (${errStatus}), trying fallback model...`);
         if (`${err?.message}`.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
-          await new Promise((res) => setTimeout(res, 400));
+          await new Promise((res) => setTimeout(res, 300));
         }
       }
     }

@@ -295,57 +295,87 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </p>
             )}
 
-            {/* Decks Preview from Learn Curriculum */}
-            {decks.length > 0 && (
-              <div className="pt-1 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1.5">
-                <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                  <span>Decks ({decks.length}):</span>
-                  {onNavigateToRecall && (
-                    <button
-                      type="button"
-                      onClick={onNavigateToRecall}
-                      className="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer lowercase font-medium text-[11px]"
-                    >
-                      view all in recall →
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
-                  {decks.slice(0, 3).map((deck) => {
-                    const deckCards = (flashcards || []).filter((c) => c.deckId === deck.id);
-                    const dueCount = deckCards.filter(isCardDue).length;
-                    return (
-                      <div
-                        key={deck.id}
-                        onClick={() =>
-                          onStartRecallSession
-                            ? onStartRecallSession(deck.id)
-                            : onNavigateToRecall?.()
-                        }
-                        className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-700/60 border border-slate-200/70 dark:border-slate-600/70 hover:border-indigo-300 dark:hover:border-indigo-600 cursor-pointer transition group"
-                      >
-                        <div className="truncate mr-2">
-                          <div className="font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate text-xs">
-                            {deck.title}
-                          </div>
-                          <div className="text-[10px] text-slate-400 truncate">
-                            {deck.subject} • {deckCards.length} cards{' '}
-                            {dueCount > 0 && (
-                              <span className="text-rose-500 dark:text-rose-400 font-bold">
-                                • {dueCount} due
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-300 font-bold text-[10px] shrink-0">
-                          Review →
+            {/* Decks Preview from Learn Curriculum & Vault */}
+            {decks.length > 0 && (() => {
+              const learnDecksList = decks.filter((d) => d.id.startsWith('deck-learn-'));
+              const displayDecks = learnDecksList.length > 0 ? [...learnDecksList, ...decks.filter((d) => !d.id.startsWith('deck-learn-'))] : decks;
+              
+              return (
+                <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                        Decks ({decks.length})
+                      </span>
+                      {learnDecksList.length > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60">
+                          {learnDecksList.length} from Learn Tab
                         </span>
-                      </div>
-                    );
-                  })}
+                      )}
+                    </div>
+                    {onNavigateToRecall && (
+                      <button
+                        type="button"
+                        onClick={onNavigateToRecall}
+                        className="text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer lowercase font-medium text-[11px]"
+                      >
+                        view all in recall →
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
+                    {displayDecks.slice(0, 6).map((deck) => {
+                      const deckCards = (flashcards || []).filter((c) => c.deckId === deck.id);
+                      const dueCount = deckCards.filter(isCardDue).length;
+                      const isLearn = deck.id.startsWith('deck-learn-');
+                      return (
+                        <div
+                          key={deck.id}
+                          onClick={() =>
+                            onStartRecallSession
+                              ? onStartRecallSession(deck.id)
+                              : onNavigateToRecall?.()
+                          }
+                          className={`flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-slate-700/60 border ${
+                            isLearn
+                              ? 'border-indigo-200/90 dark:border-indigo-800/80 shadow-2xs'
+                              : 'border-slate-200/70 dark:border-slate-600/70'
+                          } hover:border-indigo-400 dark:hover:border-indigo-500 cursor-pointer transition group`}
+                        >
+                          <div className="truncate mr-2">
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate text-xs">
+                                {deck.title}
+                              </span>
+                              {isLearn && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-indigo-100 dark:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 shrink-0">
+                                  Learn
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {deck.subject} • {deckCards.length} cards{' '}
+                              {dueCount > 0 ? (
+                                <span className="text-rose-500 dark:text-rose-400 font-bold">
+                                  • {dueCount} due today
+                                </span>
+                              ) : (
+                                <span className="text-emerald-500 font-semibold">
+                                  • ready
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] shrink-0 shadow-2xs transition">
+                            {dueCount > 0 ? 'Review' : 'Practice'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           {/* Large, Obvious Primary Action */}

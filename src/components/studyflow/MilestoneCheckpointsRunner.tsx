@@ -379,7 +379,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  🎯 Module 2 • Conceptual Checkpoints
+                  🎯 Concept Check
                 </span>
                 <span className="text-[11px] font-bold text-slate-400">
                   {chapterName} • {section.title}
@@ -388,7 +388,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
 
               <div className="flex items-center gap-3 mt-0.5">
                 <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate">
-                  Open-Ended Synthesis & Derivations
+                  Concept Check
                 </h2>
                 <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
                   {stats.understoodCount} of {stats.total} Understood ({stats.scorePct}%)
@@ -520,7 +520,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                     }}
                     className="w-full sm:w-auto px-6 py-3 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25"
                   >
-                    <span>Proceed to Module 3: Active Recall Deck</span>
+                    <span>Proceed to Active Recall Deck</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
@@ -909,7 +909,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                 }}
                 className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-black text-xs transition cursor-pointer flex items-center gap-2 shadow-md hover:shadow-purple-600/20"
               >
-                <span>Proceed to Module 3: Recall Deck</span>
+                <span>Proceed to Active Recall Deck</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             )}

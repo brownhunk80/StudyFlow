@@ -233,27 +233,49 @@ export default function App() {
     return extractLearnTabDecksAndCards(exams);
   }, [exams, activeTab, syncNonce]);
 
-  // Combined Decks: Custom created decks + Learn tab curriculum decks
+  // Combined Decks: Learn tab curriculum decks (prioritized) + Custom created decks
   const combinedDecks = useMemo(() => {
-    const customIds = new Set(decks.map((d) => d.id));
-    const merged = [...decks];
+    const seenIds = new Set<string>();
+    const merged: FlashcardDeck[] = [];
+
+    // Prioritize Learn tab curriculum decks first so the user's active chapter material is immediately accessible
     learnDecks.forEach((ld) => {
-      if (!customIds.has(ld.id)) {
+      if (!seenIds.has(ld.id)) {
+        seenIds.add(ld.id);
         merged.push(ld);
       }
     });
+
+    // Then include custom created decks
+    decks.forEach((d) => {
+      if (!seenIds.has(d.id)) {
+        seenIds.add(d.id);
+        merged.push(d);
+      }
+    });
+
     return merged;
   }, [decks, learnDecks]);
 
-  // Combined Flashcards: Custom created cards + Learn tab curriculum cards
+  // Combined Flashcards: Learn tab curriculum cards + Custom created cards
   const combinedFlashcards = useMemo(() => {
-    const customIds = new Set(flashcards.map((c) => c.id));
-    const merged = [...flashcards];
+    const seenIds = new Set<string>();
+    const merged: Flashcard[] = [];
+
     learnCards.forEach((lc) => {
-      if (!customIds.has(lc.id)) {
+      if (!seenIds.has(lc.id)) {
+        seenIds.add(lc.id);
         merged.push(lc);
       }
     });
+
+    flashcards.forEach((c) => {
+      if (!seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        merged.push(c);
+      }
+    });
+
     return merged;
   }, [flashcards, learnCards]);
 

@@ -220,6 +220,8 @@ export const MilestoneRecallDeckRunner: React.FC<MilestoneRecallDeckRunnerProps>
     setCards(updated);
     try {
       localStorage.setItem(`milestone_recall_deck_${section.id}`, JSON.stringify(updated));
+      localStorage.setItem(`recall_deck_${section.id}`, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
     } catch {}
 
     const active = updated.filter((c) => c.status !== 'disabled');
@@ -342,7 +344,7 @@ export const MilestoneRecallDeckRunner: React.FC<MilestoneRecallDeckRunnerProps>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                  🧠 Module 3 • Active Recall Deck
+                  🧠 Active Recall Deck
                 </span>
                 <span className="text-[10px] font-bold text-slate-400">
                   SM-2 Spaced Repetition

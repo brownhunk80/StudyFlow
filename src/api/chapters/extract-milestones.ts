@@ -126,11 +126,10 @@ ${truncatedText}
 
 Extract the 3 to 6 curriculum milestones matching the sections and headings above.`;
 
-  // Cascade through modern supported models (gemini-3.8-flash, gemini-3.1-flash-lite, gemini-flash-latest)
   const candidateModels = [
-    'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.8-flash',
   ];
 
   let lastError: any = null;
@@ -153,10 +152,10 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
         },
       });
 
-      // Crucial: Attach a catch handler to apiPromise immediately to prevent unhandled rejection
+      // Attach a silent catch handler to apiPromise immediately to prevent unhandled rejection
       // if timeoutPromise rejects the race before apiPromise resolves or rejects in the background
-      apiPromise.catch((err) => {
-        console.warn(`[ExtractMilestones] Background apiPromise caught for ${model}:`, err?.message || err);
+      apiPromise.catch(() => {
+        // Handled via Promise.race or safely discarded on timeout
       });
 
       const response = await Promise.race([apiPromise, timeoutPromise]);
@@ -204,11 +203,12 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
-      console.warn(`[ExtractMilestones] Model ${model} failed:`, err?.message || err);
+      const errStatus = err?.status || err?.code || (err?.message?.includes('503') ? 503 : 'error');
+      console.log(`[ExtractMilestones] Model ${model} unavailable (${errStatus}), trying fallback model...`);
       lastError = err;
       // Brief pause before trying fallback model if 503/429
       if (`${err?.message}`.includes('503') || `${err?.message}`.includes('high demand') || `${err?.message}`.includes('429')) {
-        await new Promise((res) => setTimeout(res, 400));
+        await new Promise((res) => setTimeout(res, 300));
       }
     }
   }
@@ -216,8 +216,8 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
   // If external AI models hit rate-limit quotas (429) or high-demand spikes (503):
   // Perform high-precision structural milestone discovery directly from the user's uploaded chapter text!
   // This extracts the user's ACTUAL headings and topics rather than failing or injecting irrelevant static mocks.
-  console.warn(
-    `[ExtractMilestones] AI models at capacity (${lastError?.message || 'busy'}). Extracting milestones directly from document text structure.`
+  console.log(
+    `[ExtractMilestones] External models unavailable. Extracting milestones directly from document text structure.`
   );
 
   return extractTextGroundedMilestones(rawText, chapterTitle, lastError?.message);

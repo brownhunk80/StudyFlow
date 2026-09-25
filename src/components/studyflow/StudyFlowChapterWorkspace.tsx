@@ -223,6 +223,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             },
           ],
           flashcards: newFlashcards.length > 0 ? newFlashcards : sec.flashcards,
+          recallDeck: Array.isArray(detail.recallDeck) && detail.recallDeck.length > 0 ? detail.recallDeck : sec.recallDeck,
           quizzes: [newQuiz],
         };
 
@@ -230,7 +231,12 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         setSections(next);
         onUpdateChapterSections?.(chapter.id, next, exam?.id);
         try {
+          if (newFlashcards.length > 0) {
+            localStorage.setItem(`milestone_recall_deck_${sec.id}`, JSON.stringify(newFlashcards));
+            localStorage.setItem(`recall_deck_${sec.id}`, JSON.stringify(newFlashcards));
+          }
           localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(next));
+          window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
         } catch {
           // ignore
         }
@@ -398,7 +404,9 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   const handleUpdateRecallCards = (sectionId: string, updatedCards: any[], recallScorePct: number) => {
     try {
       localStorage.setItem(`milestone_recall_deck_${sectionId}`, JSON.stringify(updatedCards));
+      localStorage.setItem(`recall_deck_${sectionId}`, JSON.stringify(updatedCards));
       localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(sections));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
     } catch {}
     const cpScore = getMilestoneCheckpointsScore(sectionId);
     const newMasteryIndex = Math.min(100, Math.round(cpScore * 0.4 + recallScorePct * 0.6));

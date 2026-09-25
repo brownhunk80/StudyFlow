@@ -193,7 +193,7 @@ In the study of **${chapterName}**, ${section.title} represents a critical conce
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                  📖 Module 1 • Concept Notes
+                  📖 Read Summary & Notes
                 </span>
                 <span className="text-[11px] font-bold text-slate-400">
                   {chapterName}
@@ -456,9 +456,9 @@ In the study of **${chapterName}**, ${section.title} represents a critical conce
           <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-semibold text-slate-700 dark:text-slate-300">
-              Module 1 Read Complete:
+              Summary & Notes Complete:
             </span>
-            <span>Synthesize your understanding in Module 2 Checkpoints.</span>
+            <span>Synthesize your understanding in Concept Check.</span>
           </div>
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
@@ -479,7 +479,7 @@ In the study of **${chapterName}**, ${section.title} represents a critical conce
                 }}
                 className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md hover:shadow-emerald-600/20"
               >
-                <span>Proceed to Module 2: Checkpoints</span>
+                <span>Proceed to Concept Check</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             )}

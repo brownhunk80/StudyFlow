@@ -84,15 +84,67 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
   const learnCards: Flashcard[] = [];
   const seenCardIds = new Set<string>();
   const seenDeckIds = new Set<string>();
+  const seenSectionIds = new Set<string>();
 
-  // Ensure we check exams passed in plus any stored in localStorage
-  let combinedExamsList: Exam[] = Array.isArray(exams) ? [...exams] : [];
-  if (combinedExamsList.length === 0) {
-    const storedExams = safeGetLocalStorage('studyflow_exams');
-    if (Array.isArray(storedExams) && storedExams.length > 0) {
-      combinedExamsList = storedExams;
-    }
+  // Collect exams from props plus any stored in localStorage
+  const examMap = new Map<string, Exam>();
+  if (Array.isArray(exams)) {
+    exams.forEach((e) => {
+      if (e?.id) examMap.set(e.id, e);
+    });
   }
+  const storedExams = safeGetLocalStorage('studyflow_exams');
+  if (Array.isArray(storedExams)) {
+    storedExams.forEach((e) => {
+      if (e?.id) {
+        if (!examMap.has(e.id)) {
+          examMap.set(e.id, e);
+        } else {
+          // Merge chapters
+          const existing = examMap.get(e.id)!;
+          const mergedChaps = [...(existing.chapters || [])];
+          (e.chapters || []).forEach((c: any) => {
+            if (!mergedChaps.some((mc) => mc.id === c.id)) {
+              mergedChaps.push(c);
+            }
+          });
+          examMap.set(e.id, { ...existing, chapters: mergedChaps });
+        }
+      }
+    });
+  }
+
+  const combinedExamsList: Exam[] = Array.from(examMap.values());
+
+  // Build section to chapter/subject metadata lookup from all cached milestones
+  const sectionMetaMap = new Map<
+    string,
+    { sectionTitle: string; chapterName: string; subjectName: string; color?: string }
+  >();
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('chapter_milestones_')) {
+        const chapId = key.replace('chapter_milestones_', '');
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const milestones = JSON.parse(raw);
+          if (Array.isArray(milestones)) {
+            milestones.forEach((m: any) => {
+              if (m?.id) {
+                sectionMetaMap.set(m.id, {
+                  sectionTitle: m.title || `Milestone ${m.milestoneNumber || 1}`,
+                  chapterName: m.chapterName || 'Curriculum',
+                  subjectName: m.subjectName || 'Course',
+                });
+              }
+            });
+          }
+        }
+      }
+    }
+  } catch {}
 
   // Scan through all exams and chapters
   combinedExamsList.forEach((exam) => {
@@ -110,8 +162,9 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
 
       rawSections.forEach((section, sIdx) => {
         if (!section || !section.id) return;
+        seenSectionIds.add(section.id);
 
-        const deckId = `deck-learn-${chapter.id}-${section.id || sIdx + 1}`;
+        const deckId = `deck-learn-${chapter.id}-${section.id}`;
         const sectionTitle = section.title || `Section ${section.sectionNumber || sIdx + 1}`;
         const deckTitle = `${chapter.name}: ${sectionTitle}`;
 
@@ -199,7 +252,7 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
     });
   });
 
-  // Also check for any standalone milestone decks stored in localStorage
+  // Also check for any standalone milestone decks stored in localStorage not already captured
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -207,6 +260,9 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
 
       if (key.startsWith('milestone_recall_deck_') || key.startsWith('recall_deck_')) {
         const sectionId = key.replace('milestone_recall_deck_', '').replace('recall_deck_', '');
+        if (seenSectionIds.has(sectionId)) continue;
+        seenSectionIds.add(sectionId);
+
         const deckId = `deck-learn-cached-${sectionId}`;
         if (seenDeckIds.has(deckId)) continue;
 
@@ -214,6 +270,10 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
         if (!raw) continue;
         const cardsList = JSON.parse(raw);
         if (!Array.isArray(cardsList) || cardsList.length === 0) continue;
+
+        const meta = sectionMetaMap.get(sectionId);
+        const resolvedTitle = meta?.sectionTitle ? `${meta.chapterName}: ${meta.sectionTitle}` : `Learn Recall Deck (${sectionId.slice(-6)})`;
+        const resolvedSubj = meta?.subjectName || 'Curriculum';
 
         const converted: Flashcard[] = [];
         cardsList.forEach((rc, cIdx) => {
@@ -244,8 +304,8 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
             box,
             dueDate,
             status,
-            subject: 'Science',
-            chapter: 'Curriculum',
+            subject: resolvedSubj,
+            chapter: meta?.chapterName || 'Curriculum',
           };
           converted.push(flashcard);
           learnCards.push(flashcard);
@@ -258,9 +318,9 @@ export function extractLearnTabDecksAndCards(exams: Exam[] = []): LearnSyncResul
 
           learnDecks.push({
             id: deckId,
-            title: `Learn Section Recall Deck`,
-            subject: 'Science',
-            color: '#4f46e5',
+            title: resolvedTitle,
+            subject: resolvedSubj,
+            color: meta?.color || '#6366f1',
             description: `Active Recall Deck from Learn Section`,
             totalCards: converted.length,
             dueCardsCount: dueCount,
