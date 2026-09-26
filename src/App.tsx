@@ -365,6 +365,21 @@ export default function App() {
       localStorage.removeItem('studyflow_flashcards');
       localStorage.removeItem('studyflow_decks');
       localStorage.removeItem('studyflow_achievements');
+      // Also clear any dynamic milestone, recall deck, and chapter keys
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (
+          k &&
+          (k.startsWith('milestone_') ||
+            k.startsWith('recall_deck_') ||
+            k.startsWith('chapter_milestones_') ||
+            k.startsWith('chapter_progress_'))
+        ) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
       localStorage.setItem('studyflow_version', CURRENT_STORAGE_VERSION);
     } catch (e) {}
 

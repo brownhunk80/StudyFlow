@@ -18,6 +18,10 @@ import {
   generateRecallDeck,
   RecallDeckGenerateRequestSchema,
 } from './src/api/recall-deck/generate';
+import {
+  generateConceptualCheckpoints,
+  GenerateCheckpointsRequestSchema,
+} from './src/api/checkpoints/generate';
 
 const app = express();
 const PORT = 3000;
@@ -340,6 +344,53 @@ app.post('/api/check-learning/generate', async (req, res) => {
     return res.status(status).json({
       error: error.code || 'GENERATION_ERROR',
       message: error.message || 'Failed to generate check-learning questions.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Module 2: Rigorous Conceptual Checkpoints Generator
+// Deterministic Closed-Book Extraction & Synthesis
+// -------------------------------------------------------------
+app.post('/api/checkpoints/generate', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+
+    const chapterTitle = rawBody.chapterTitle || rawBody.chapterName || 'Curriculum Chapter';
+    const milestoneTitle = rawBody.milestoneTitle || rawBody.title || 'Milestone';
+    const topicTags =
+      Array.isArray(rawBody.topicTags) && rawBody.topicTags.length > 0
+        ? rawBody.topicTags
+        : Array.isArray(rawBody.topics) && rawBody.topics.length > 0
+          ? rawBody.topics
+          : Array.isArray(rawBody.coreTopics) && rawBody.coreTopics.length > 0
+            ? rawBody.coreTopics
+            : [milestoneTitle];
+    const sectionTextExcerpt = rawBody.sectionTextExcerpt ?? rawBody.textExcerpt ?? '';
+
+    const validationResult = GenerateCheckpointsRequestSchema.safeParse({
+      chapterTitle,
+      milestoneTitle,
+      topicTags,
+      sectionTextExcerpt,
+    });
+
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid request parameters for checkpoints generation.',
+        details: validationResult.error.format(),
+      });
+    }
+
+    const result = await generateConceptualCheckpoints(validationResult.data);
+    return res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error in /api/checkpoints/generate:', error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'GENERATION_ERROR',
+      message: error.message || 'Failed to generate conceptual checkpoints.',
     });
   }
 });

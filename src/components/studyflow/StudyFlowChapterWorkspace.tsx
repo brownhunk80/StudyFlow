@@ -14,6 +14,7 @@ import {
   FileCheck,
   RefreshCw,
   Activity,
+  RotateCcw,
 } from 'lucide-react';
 import {
   Chapter,
@@ -115,6 +116,9 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   const [isDiagnosticsModalOpen, setIsDiagnosticsModalOpen] = useState(false);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [extractedMilestonesForReview, setExtractedMilestonesForReview] = useState<DocumentMilestoneItem[]>([]);
+  const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const [resetNonce, setResetNonce] = useState(0);
+  const [justReset, setJustReset] = useState(false);
 
   // Milestone AI Pipeline extraction state & animated stepper
   const [isExtractingMilestones, setIsExtractingMilestones] = useState(false);
@@ -302,7 +306,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
       }
     } catch {}
     const sec = sections.find((s) => s.id === sectionId);
-    return sec?.completionRate || 40;
+    return typeof sec?.completionRate === 'number' ? sec.completionRate : 0;
   };
 
   // Helper to compute overall milestone mastery index: (CheckpointsScore * 0.4) + (RecallDeckScore * 0.6)
@@ -433,6 +437,86 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         exam?.id
       );
     }
+  };
+
+  // Handle Reset All Progress for this chapter
+  const performResetChapterProgress = () => {
+    sections.forEach((s) => {
+      try {
+        localStorage.removeItem(`milestone_read_${s.id}`);
+        localStorage.removeItem(`milestone_checkpoints_${s.id}`);
+        localStorage.removeItem(`milestone_recall_deck_${s.id}`);
+        localStorage.removeItem(`recall_deck_${s.id}`);
+        localStorage.removeItem(`milestone_notes_${s.id}`);
+        localStorage.removeItem(`section_check_${s.id}`);
+        localStorage.removeItem(`quiz_${s.id}`);
+        localStorage.removeItem(`section_quiz_${s.id}`);
+        localStorage.removeItem(`drill_history_${s.id}`);
+      } catch {}
+    });
+
+    try {
+      localStorage.removeItem(`chapter_milestones_${chapter.id}`);
+      localStorage.removeItem(`chapter_progress_${chapter.id}`);
+      localStorage.removeItem(`chapter_diagnostic_${chapter.id}`);
+    } catch {}
+
+    const resetSections: Section[] = sections.map((sec) => ({
+      ...sec,
+      completionRate: 0,
+      summaryRead: false,
+      isSkipped: false,
+      knowledgeQuestions: sec.knowledgeQuestions?.map((k) => ({
+        ...k,
+        userResponse: '',
+        isCorrect: null,
+      })) || [],
+      checkLearningQuestions: sec.checkLearningQuestions?.map((cq: any) => ({
+        ...cq,
+        userResponse: '',
+        isCorrect: null,
+        selfAssessment: null,
+      })) || [],
+      quizzes: [],
+      flashcards: sec.flashcards?.map((fc) => ({
+        ...fc,
+        interval: 1,
+        repetition: 0,
+        easinessFactor: 2.5,
+        status: 'active' as const,
+        lastRating: undefined,
+      })),
+      recallDeck: Array.isArray(sec.recallDeck)
+        ? sec.recallDeck.map((c: any) => ({
+            ...c,
+            interval: 1,
+            repetition: 0,
+            easinessFactor: 2.5,
+            status: 'active' as const,
+            lastRating: undefined,
+          }))
+        : undefined,
+    }));
+
+    try {
+      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(resetSections));
+    } catch {}
+
+    setSections(resetSections);
+    setResetNonce((prev) => prev + 1);
+    onUpdateChapterSections?.(chapter.id, resetSections, exam?.id);
+    if (onUpdateChapterStatus) {
+      onUpdateChapterStatus(chapter.id, 'needs_practice', 0, exam?.id);
+    }
+    setExpandedSectionId(resetSections[0]?.id || null);
+
+    setJustReset(true);
+    setTimeout(() => setJustReset(false), 3000);
+
+    try {
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
   };
 
   // Handle concept skip toggle
@@ -928,6 +1012,30 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
 
             {/* Re-extract / Overwrite Sections Button */}
             <div className="flex items-center gap-2">
+              {sections.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirmModal(true)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer shadow-2xs ${
+                    justReset
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                  }`}
+                  title="Reset all milestone reading, checkpoints, and recall deck progress for this chapter"
+                >
+                  {justReset ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Progress Reset!</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Reset Progress</span>
+                    </>
+                  )}
+                </button>
+              )}
               {hasDocument && (
                 <button
                   onClick={() => handleExtractMilestones(true)}
@@ -965,7 +1073,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 {sections.length > 0
-                  ? 'Work through each sequential section to master notes, derivations, and active recall.'
+                  ? 'Work through each section to review notes, complete concept checks, and practice active recall.'
                   : 'Sections will be generated exclusively from your source document.'}
               </p>
             </div>
@@ -1156,7 +1264,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             <div className="pt-2">
               {sections.map((section, idx) => (
                 <RoadmapMilestoneCard
-                  key={section.id}
+                  key={`${section.id}-${resetNonce}`}
                   section={section}
                   chapterName={chapter.name}
                   chapterRawText={chapter.rawText || (chapter as any).documentText}
@@ -1187,6 +1295,40 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                   onLaunchRecallDeck={handleOpenFlashcards}
                   onToggleConceptSkip={handleToggleConceptSkip}
                   onToggleConceptStatus={handleToggleConceptStatus}
+                  onResetSectionProgress={(secId) => {
+                    const updated: Section[] = sections.map((s) =>
+                      s.id === secId
+                        ? {
+                            ...s,
+                            completionRate: 0,
+                            summaryRead: false,
+                            knowledgeQuestions: s.knowledgeQuestions?.map((k) => ({
+                              ...k,
+                              userResponse: '',
+                              isCorrect: null,
+                            })) || [],
+                            checkLearningQuestions: s.checkLearningQuestions?.map((cq: any) => ({
+                              ...cq,
+                              userResponse: '',
+                              isCorrect: null,
+                              selfAssessment: null,
+                            })) || [],
+                            quizzes: [],
+                            flashcards: s.flashcards?.map((fc) => ({
+                              ...fc,
+                              interval: 1,
+                              repetition: 0,
+                              easinessFactor: 2.5,
+                              status: 'active' as const,
+                              lastRating: undefined,
+                            })),
+                          }
+                        : s
+                    );
+                    setSections(updated);
+                    setResetNonce((prev) => prev + 1);
+                    onUpdateChapterSections?.(chapter.id, updated, exam?.id);
+                  }}
                 />
               ))}
             </div>
@@ -1442,6 +1584,45 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         chapter={chapter}
         onOpenAttachModal={() => setIsAttachModalOpen(true)}
       />
+
+      {/* Reset Chapter Progress Confirmation Modal */}
+      {showResetConfirmModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+              <RotateCcw className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                Reset Chapter Progress?
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                This will reset all progress for <strong>{chapter.name}</strong> back to 0%. Summary read status, concept checks, and recall deck review history will be cleared.
+              </p>
+            </div>
+            <div className="pt-2 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowResetConfirmModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResetConfirmModal(false);
+                  performResetChapterProgress();
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-[0.98] text-white text-xs font-bold transition shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Yes, Reset Progress</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

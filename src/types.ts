@@ -674,6 +674,7 @@ export interface Section {
   knowledgeQuestions?: KnowledgeQuestion[];
   flashcards?: DocumentFlashcard[];
   quizzes?: Quiz[];
+  summaryRead?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -724,6 +725,11 @@ export interface KnowledgeQuestion {
   evaluatedAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  subtopicTag?: string;
+  benchmarkAnswer?: string;
+  keyScoringPoints?: string[];
+  trapAnalysis?: string;
+  sourceCitation?: string;
 }
 
 /**

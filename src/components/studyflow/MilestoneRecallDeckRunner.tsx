@@ -333,27 +333,28 @@ export const MilestoneRecallDeckRunner: React.FC<MilestoneRecallDeckRunnerProps>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* ================================================================= */}
-        {/* TOP HEADER: REMNOTE-STYLE BREADCRUMB & METRICS */}
+        {/* TOP HEADER: ACTIVE RECALL DECK (SINGLE COMPACT ROW) */}
         {/* ================================================================= */}
-        <div className="p-4 sm:p-5 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
+        <div className="p-3.5 sm:p-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-purple-500/10 dark:bg-purple-400/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
-              <Brain className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-purple-500/10 dark:bg-purple-400/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+              <Brain className="w-4 h-4" />
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                  🧠 Active Recall Deck
-                </span>
-                <span className="text-[10px] font-bold text-slate-400">
-                  SM-2 Spaced Repetition
-                </span>
-              </div>
+            <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 shrink-0">
+                🧠 Active Recall Deck
+              </span>
 
-              <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate mt-0.5">
+              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
                 {section.title}
               </h2>
+
+              <span className="text-[11px] font-medium text-slate-400 hidden md:inline truncate">
+                ({chapterName})
+              </span>
             </div>
           </div>
 

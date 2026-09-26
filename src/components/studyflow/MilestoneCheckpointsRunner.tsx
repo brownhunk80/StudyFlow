@@ -31,7 +31,9 @@ import {
   Volume2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import ReactMarkdown from 'react-markdown';
 import { Section, KnowledgeQuestion } from '../../types';
+import { extractSectionCheckpoints, SectionCheckpoint } from '../../utils/sectionCheckpointExtractor';
 
 export interface MilestoneCheckpointItem {
   id: string;
@@ -45,6 +47,7 @@ export interface MilestoneCheckpointItem {
   isRevealed: boolean;
   selfAssessment: 'understood' | 'needs_work' | null;
   paperImage?: string | null;
+  sourceCitation?: string;
 }
 
 export interface MilestoneCheckpointsRunnerProps {
@@ -66,97 +69,85 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
   onProceedToRecallDeck,
   onSaveCheckpoints,
 }) => {
-  // Generate initial checkpoints based on section data or tailored knowledge questions
+  // Generate initial checkpoints based strictly on that section's content
   const initialCheckpoints: MilestoneCheckpointItem[] = useMemo(() => {
-    // If saved checkpoints in localStorage, restore them
+    // 1. If saved checkpoints in localStorage, verify they are not the old generic boilerplate template
     try {
       const saved = localStorage.getItem(`milestone_checkpoints_${section.id}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Check for stale generic pseudo-physics boilerplate text
+          const isStaleBoilerplate = parsed.some((cp: any) => {
+            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''}`;
+            return (
+              combined.includes('constitutive transfer equation') ||
+              combined.includes('quasi-static') ||
+              combined.includes('restorative flux opposed to dissipation') ||
+              combined.includes('keeping milliamperes instead of amperes') ||
+              combined.includes('Formulate the step-by-step problem-solving heuristic')
+            );
+          });
 
-    if (section.knowledgeQuestions && section.knowledgeQuestions.length > 0) {
-      return section.knowledgeQuestions.map((kq, idx) => ({
-        id: kq.id || `cp-${section.id}-${idx + 1}`,
-        prompt: kq.question,
-        subtopicTag: section.keyTopics?.[idx % (section.keyTopics?.length || 1)] || section.title,
-        benchmarkAnswer: kq.sampleAnswer || `Governing relationship for ${section.title}. Under standard boundary constraints, the response variable correlates directly with the stimulus magnitude according to constitutive relations.`,
-        keyScoringPoints: [
-          'Explicit statement of governing theorems and boundary conditions',
-          'Strict dimensional consistency and base SI unit conversions',
-          'Clarification of fundamental physical causality and variable interdependence',
-        ],
-        trapAnalysis: 'Students often substitute values without stating general formulas symbolically or invert coordinate sign conventions.',
-        userResponse: kq.userResponse || '',
-        inputMode: 'type',
-        isRevealed: false,
-        selfAssessment: kq.isCorrect === true ? 'understood' : kq.isCorrect === false ? 'needs_work' : null,
-      }));
+          if (!isStaleBoilerplate) {
+            return parsed;
+          }
+          console.log(`[ConceptCheck] Discarded stale generic boilerplate for section "${section.title}", re-extracting section-grounded checkpoints.`);
+        }
+      }
+    } catch (err) {
+      console.warn('Error reading cached checkpoints:', err);
     }
 
-    const topics = section.keyTopics && section.keyTopics.length > 0 ? section.keyTopics : [section.title];
-    const t0 = topics[0] || section.title;
-    const t1 = topics[1] || t0;
-    const t2 = topics[2] || t0;
-
-    return [
-      {
-        id: `cp-1-${section.id}`,
-        prompt: `Derive and explain the fundamental relationship governing ${t0}. What physical assumptions or boundary conditions are strictly required?`,
-        subtopicTag: t0,
-        benchmarkAnswer: `The governing principle of ${t0} dictates that energy and state continuity are preserved across defined boundary limits. The net response scales proportionally with the applied gradient according to the constitutive transfer equation:\n\n1. System boundary is established as closed and quasi-static.\n2. Potential gradients induce a restorative flux opposed to dissipation.\n3. At steady-state equilibrium, the rate of dissipation equals the input rate.`,
-        keyScoringPoints: [
-          'Explicit declaration of boundary limits and quasi-static assumptions',
-          'Proper identification of driving potential versus resistive impediments',
-          'Correct vector orientation and sign conventions (+ / -)',
-        ],
-        trapAnalysis: 'Neglecting the sign convention in vector quantities or assuming an open boundary when isothermal confinement is required.',
-        userResponse: '',
-        inputMode: 'type',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-      {
-        id: `cp-2-${section.id}`,
-        prompt: `Identify the most critical calculation pitfall or conceptual trap students encounter when analyzing ${t1}. How should it be avoided?`,
-        subtopicTag: t1,
-        benchmarkAnswer: `The primary pitfall occurs when students substitute numerical values prior to normalizing units into base SI standards (e.g. keeping milliamperes instead of amperes, or centimeters instead of meters). Additionally, confusing relative reference frames with absolute ground coordinates yields inverted sign terms in velocity and force equations.`,
-        keyScoringPoints: [
-          'Pre-computation unit verification (converting non-SI to base SI standards)',
-          'Clear reference frame selection prior to algebraic decomposition',
-          'Dimensional checking: verifying that both sides of final equation match units',
-        ],
-        trapAnalysis: 'Premature numeric substitution that obscures arithmetic sign cancellations.',
-        userResponse: '',
-        inputMode: 'type',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-      {
-        id: `cp-3-${section.id}`,
-        prompt: `Formulate the step-by-step problem-solving heuristic used to resolve complex multi-part questions on ${t2}.`,
-        subtopicTag: t2,
-        benchmarkAnswer: `A robust 5-step heuristic guarantees full method marks:\n1. Diagram & Coordinates: Sketch the system and label given parameters with explicit units.\n2. Symbolic Formulation: State governing equations without numeric values.\n3. Constraint Equations: Relate auxiliary parameters (geometry, conservation).\n4. Algebraic Isolation: Rearrange explicitly for the target unknown variable.\n5. Dimensional & Sanity Check: Confirm sign, magnitude, and unit consistency.`,
-        keyScoringPoints: [
-          'Writing symbolic formulas first to secure method marks before arithmetic',
-          'Identification of auxiliary constraint relationships',
-          'Sanity check of final numerical result against physical extremes',
-        ],
-        trapAnalysis: 'Jumping straight to numerical answers without documenting intermediate algebraic transformations.',
-        userResponse: '',
-        inputMode: 'type',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-    ];
+    // 2. Extract section-grounded checkpoints strictly for this section
+    const extracted = extractSectionCheckpoints(section);
+    return extracted.map((cp) => ({
+      id: cp.id,
+      prompt: cp.prompt,
+      subtopicTag: cp.subtopicTag,
+      benchmarkAnswer: cp.benchmarkAnswer,
+      keyScoringPoints: cp.keyScoringPoints,
+      trapAnalysis: cp.trapAnalysis,
+      userResponse: cp.userResponse,
+      inputMode: cp.inputMode,
+      isRevealed: cp.isRevealed,
+      selfAssessment: cp.selfAssessment,
+      sourceCitation: cp.sourceCitation,
+    }));
   }, [section]);
 
   const [checkpoints, setCheckpoints] = useState<MilestoneCheckpointItem[]>(initialCheckpoints);
   const [activeIndex, setActiveIndex] = useState(0);
   const [activeInputMode, setActiveInputMode] = useState<'type' | 'speak' | 'paper'>('type');
   const [isCompleted, setIsCompleted] = useState(false);
+
+  // Allow resetting checkpoints directly to clean section-extracted version
+  const handleResetToCleanSectionCheckpoints = () => {
+    try {
+      localStorage.removeItem(`milestone_checkpoints_${section.id}`);
+    } catch {}
+    const fresh = extractSectionCheckpoints(section);
+    const mapped = fresh.map((cp) => ({
+      id: cp.id,
+      prompt: cp.prompt,
+      subtopicTag: cp.subtopicTag,
+      benchmarkAnswer: cp.benchmarkAnswer,
+      keyScoringPoints: cp.keyScoringPoints,
+      trapAnalysis: cp.trapAnalysis,
+      userResponse: '',
+      inputMode: 'type' as const,
+      isRevealed: false,
+      selfAssessment: null,
+      sourceCitation: cp.sourceCitation,
+    }));
+    setCheckpoints(mapped);
+    setActiveIndex(0);
+    setIsCompleted(false);
+    try {
+      localStorage.setItem(`milestone_checkpoints_${section.id}`, JSON.stringify(mapped));
+    } catch {}
+    onSaveCheckpoints?.(section.id, mapped, 0);
+  };
 
   // Speech Recognition state
   const [isListening, setIsListening] = useState(false);
@@ -368,32 +359,32 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-4xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
         {/* ================================================================= */}
-        {/* TOP HEADER: MODULE 2 BANNER & PROGRESS */}
+        {/* TOP HEADER: CONCEPT CHECK & PROGRESS (SINGLE COMPACT ROW) */}
         {/* ================================================================= */}
-        <div className="p-4 sm:p-5 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
+        <div className="p-3.5 sm:p-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-              <Target className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 dark:bg-emerald-400/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+              <Target className="w-4 h-4" />
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  🎯 Concept Check
-                </span>
-                <span className="text-[11px] font-bold text-slate-400">
-                  {chapterName} • {section.title}
-                </span>
-              </div>
+            <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                🎯 Concept Check
+              </span>
 
-              <div className="flex items-center gap-3 mt-0.5">
-                <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate">
-                  Concept Check
-                </h2>
-                <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                  {stats.understoodCount} of {stats.total} Understood ({stats.scorePct}%)
-                </span>
-              </div>
+              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                {section.title}
+              </h2>
+
+              <span className="text-[11px] font-medium text-slate-400 hidden md:inline truncate">
+                ({chapterName})
+              </span>
+
+              <span className="px-2 py-0.5 rounded-md text-[11px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                {stats.understoodCount} of {stats.total} Understood ({stats.scorePct}%)
+              </span>
             </div>
           </div>
 
@@ -451,8 +442,19 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             })}
           </div>
 
-          <div className="text-xs font-bold text-slate-500 shrink-0">
-            Contributes <span className="text-emerald-600 font-extrabold">{stats.milestoneContribution}%</span> of 40%
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-xs font-bold text-slate-500">
+              Contributes <span className="text-emerald-600 font-extrabold">{stats.milestoneContribution}%</span> of 40%
+            </div>
+            <button
+              type="button"
+              onClick={handleResetToCleanSectionCheckpoints}
+              title="Refresh and reload clean questions strictly for this section"
+              className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span className="hidden sm:inline">Reload Section Checks</span>
+            </button>
           </div>
         </div>
 
@@ -469,15 +471,15 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
 
               <div className="space-y-2">
                 <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  Checkpoints Evaluation Complete
+                  Concept Check Complete
                 </span>
                 <h3 className="text-2xl font-black text-slate-900 dark:text-white">
                   {stats.understoodCount === stats.total
-                    ? 'Flawless Synthesis & Derivations!'
-                    : 'Checkpoints Synthesis Recorded'}
+                    ? 'Flawless Concept Comprehension!'
+                    : 'Concept Check Recorded'}
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">
-                  You scored <span className="font-bold text-emerald-600">{stats.scorePct}%</span> on open-ended derivations. This secures <span className="font-bold text-indigo-600">{stats.milestoneContribution}%</span> towards your section retention index.
+                  You scored <span className="font-bold text-emerald-600">{stats.scorePct}%</span> on concept checks. This secures <span className="font-bold text-indigo-600">{stats.milestoneContribution}%</span> towards your section retention index.
                 </p>
               </div>
 
@@ -532,15 +534,18 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
               {/* Question Header Card */}
               <div className="p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 shadow-xs space-y-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
                       Checkpoint #{activeIndex + 1}
                     </span>
                     {currentCP.subtopicTag && (
-                      <span className="text-xs font-bold text-slate-500">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-md border border-slate-200 dark:border-slate-700">
                         {currentCP.subtopicTag}
                       </span>
                     )}
+                    <span className="text-[11px] text-slate-400 hidden sm:inline">
+                      • Section: {section.title}
+                    </span>
                   </div>
 
                   {currentCP.selfAssessment && (
@@ -556,9 +561,9 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                   )}
                 </div>
 
-                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-snug">
-                  {currentCP.prompt}
-                </h3>
+                <div className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-relaxed prose prose-base dark:prose-invert max-w-none">
+                  <ReactMarkdown>{currentCP.prompt}</ReactMarkdown>
+                </div>
               </div>
 
               {/* Multimodal Input Selector Tabs */}
@@ -772,51 +777,60 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                       <ArrowRight className="w-4 h-4" />
                     </button>
                     <p className="text-[11px] text-slate-400 mt-2">
-                      Compare your explanation against ideal textbook derivations and grading criteria.
+                      Compare your explanation against the benchmark model answer and grading criteria.
                     </p>
                   </div>
                 ) : (
                   <div className="space-y-4 animate-in fade-in-50 duration-200">
                     {/* Benchmark Model Answer */}
-                    <div className="p-5 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 space-y-2.5">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        <span className="text-xs font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                          Benchmark Model Answer & Derivation
-                        </span>
+                    <div className="p-5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 space-y-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          <span className="text-xs font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                            Benchmark Model Answer
+                          </span>
+                        </div>
+                        {currentCP.sourceCitation && (
+                          <span className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-medium italic hidden sm:inline truncate max-w-sm">
+                            Grounded in section text
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-line font-serif">
-                        {currentCP.benchmarkAnswer}
+                      <div className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-sans prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown>{currentCP.benchmarkAnswer}</ReactMarkdown>
                       </div>
                     </div>
 
                     {/* Rubric Points & Trap Breakdown */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {/* Rubric Checklist */}
-                      <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                      <div className="p-4 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
                         <span className="text-xs font-black text-slate-800 dark:text-white flex items-center gap-1.5">
                           <CheckCircle2 className="w-3.5 h-3.5 text-indigo-500" />
-                          <span>Must-Include Scoring Points</span>
+                          <span>Key Verification Criteria (Section Check)</span>
                         </span>
-                        <ul className="space-y-1.5">
+                        <ul className="space-y-2">
                           {currentCP.keyScoringPoints.map((pt, pIdx) => (
                             <li key={pIdx} className="text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2">
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                              <span>{pt}</span>
+                              <div className="flex-1 leading-snug prose prose-xs dark:prose-invert">
+                                <ReactMarkdown>{pt}</ReactMarkdown>
+                              </div>
                             </li>
                           ))}
                         </ul>
                       </div>
 
                       {/* Trap Analysis */}
-                      <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 space-y-2">
+                      <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 space-y-2.5">
                         <span className="text-xs font-black text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Common Pitfall / Distractor Analysis</span>
+                          <span>Section Misconception / Trap</span>
                         </span>
-                        <p className="text-xs text-amber-900/90 dark:text-amber-200/90 leading-relaxed">
-                          {currentCP.trapAnalysis}
-                        </p>
+                        <div className="text-xs text-amber-900/90 dark:text-amber-200/90 leading-relaxed prose prose-xs dark:prose-invert">
+                          <ReactMarkdown>{currentCP.trapAnalysis}</ReactMarkdown>
+                        </div>
                       </div>
                     </div>
 

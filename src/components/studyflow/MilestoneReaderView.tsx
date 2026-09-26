@@ -182,30 +182,32 @@ In the study of **${chapterName}**, ${section.title} represents a critical conce
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-4xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
         {/* ================================================================= */}
-        {/* HEADER: MODULE 1 STATUS & NAVIGATION */}
+        {/* HEADER: READ SUMMARY & NOTES (SINGLE COMPACT ROW) */}
         {/* ================================================================= */}
-        <div className="p-4 sm:p-5 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
+        <div className="p-3.5 sm:p-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-              <BookOpen className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 dark:bg-indigo-400/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+              <BookOpen className="w-4 h-4" />
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                  📖 Read Summary & Notes
-                </span>
-                <span className="text-[11px] font-bold text-slate-400">
-                  {chapterName}
-                </span>
-                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> Marked as Read
-                </span>
-              </div>
+            <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 shrink-0">
+                📖 Read Summary & Notes
+              </span>
 
-              <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate mt-0.5">
+              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">•</span>
+
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
                 {section.title}
               </h2>
+
+              <span className="text-[11px] font-medium text-slate-400 hidden md:inline truncate">
+                ({chapterName})
+              </span>
+
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 shrink-0">
+                <CheckCircle2 className="w-3 h-3" /> Marked as Read
+              </span>
             </div>
           </div>
 

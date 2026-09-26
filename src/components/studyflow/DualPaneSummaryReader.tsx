@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Section, SummaryMode, KnowledgeQuestion } from '../../types';
+import { extractSectionCheckpoints } from '../../utils/sectionCheckpointExtractor';
 
 export interface CheckpointItem {
   id: string;
@@ -66,66 +67,51 @@ export const DualPaneSummaryReader: React.FC<DualPaneSummaryReaderProps> = ({
   );
   const [isNotesSaved, setIsNotesSaved] = useState(false);
 
-  // Checkpoints for "Test your understanding"
+  // Checkpoints for "Test your understanding" grounded strictly in this section
   const initialCheckpoints: CheckpointItem[] = useMemo(() => {
-    if (section.knowledgeQuestions && section.knowledgeQuestions.length > 0) {
-      return section.knowledgeQuestions.map((kq, idx) => ({
-        id: kq.id,
-        prompt: kq.question,
-        benchmarkAnswer: kq.sampleAnswer,
-        keyMissedPoints: [
-          'Explicit statement of boundary assumptions & conditions',
-          'Strict adherence to standard SI units and algebraic sign conventions',
-          'Clarification of microscopic mechanism versus macroscopic observation',
-        ],
-        userAnswer: kq.userResponse || '',
-        isRevealed: false,
-        selfAssessment:
-          kq.isCorrect === true ? 'understood' : kq.isCorrect === false ? 'needs_work' : null,
-      }));
-    }
+    // 1. Check localStorage for existing checkpoints
+    try {
+      const saved = localStorage.getItem(`milestone_checkpoints_${section.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const isStale = parsed.some((cp: any) => {
+            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''}`;
+            return (
+              combined.includes('constitutive transfer equation') ||
+              combined.includes('quasi-static') ||
+              combined.includes('keeping milliamperes instead of amperes')
+            );
+          });
+          if (!isStale) {
+            return parsed.map((cp: any) => ({
+              id: cp.id,
+              prompt: cp.prompt,
+              benchmarkAnswer: cp.benchmarkAnswer,
+              keyMissedPoints: cp.keyScoringPoints || cp.keyMissedPoints || [
+                'Directly states the governing rule of this section',
+                'Demonstrates clear physical causality and correct condition checks',
+              ],
+              userAnswer: cp.userResponse || cp.userAnswer || '',
+              isRevealed: cp.isRevealed ?? false,
+              selfAssessment: cp.selfAssessment ?? null,
+            }));
+          }
+        }
+      }
+    } catch {}
 
-    return [
-      {
-        id: `cp-1-${section.id}`,
-        prompt: `State the fundamental principle governing ${section.title} and identify the key variable relationships.`,
-        benchmarkAnswer: `The governing principle establishes that the system conserves energy and momentum while maintaining directional consistency under standard boundary conditions. When the driving stimulus doubles, the primary response variable scales according to the characteristic state equation without altering equilibrium constants.`,
-        keyMissedPoints: [
-          'Conservation of foundational quantities during state changes',
-          'Assumption of ideal isothermal/frictionless boundary parameters',
-          'Distinction between transient fluctuations and stabilized equilibrium',
-        ],
-        userAnswer: '',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-      {
-        id: `cp-2-${section.id}`,
-        prompt: `What is the most frequent exam misconception or calculation pitfall when applying ${section.title}?`,
-        benchmarkAnswer: `Students frequently confuse the relative reference frame with absolute coordinates and neglect converting input quantities (e.g. milli-units or non-SI measures) into base SI units prior to substitution. Additionally, neglecting algebraic sign conventions (+ / -) when resolving vectors yields erroneous scalar outputs.`,
-        keyMissedPoints: [
-          'Coordinate reference axis assignment before arithmetic substitution',
-          'Unit normalization (e.g., converting mA or cm³ into standard SI units)',
-          'Neglecting reverse directionality or negative signs in vector resolutions',
-        ],
-        userAnswer: '',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-      {
-        id: `cp-3-${section.id}`,
-        prompt: `Formulate the step-by-step problem solving heuristic used to resolve multi-tiered questions on ${section.title}.`,
-        benchmarkAnswer: `1. Formulate all given quantities with explicit units.\n2. State the primary governing formula symbolically before numerical substitution.\n3. Identify constraint conditions and apply sign conventions.\n4. Solve algebraically for the target unknown before arithmetic computation.\n5. Box or underline the final quantity with correct dimensionality.`,
-        keyMissedPoints: [
-          'Writing symbolic formulation before inserting numeric values for maximum method marks',
-          'Explicit sign convention diagram sketching',
-          'Dimensional and physical consistency check of final result',
-        ],
-        userAnswer: '',
-        isRevealed: false,
-        selfAssessment: null,
-      },
-    ];
+    // 2. Extract section-grounded checkpoints strictly for this section
+    const extracted = extractSectionCheckpoints(section);
+    return extracted.map((cp) => ({
+      id: cp.id,
+      prompt: cp.prompt,
+      benchmarkAnswer: cp.benchmarkAnswer,
+      keyMissedPoints: cp.keyScoringPoints,
+      userAnswer: cp.userResponse || '',
+      isRevealed: false,
+      selfAssessment: cp.selfAssessment,
+    }));
   }, [section]);
 
   const [checkpoints, setCheckpoints] = useState<CheckpointItem[]>(initialCheckpoints);
@@ -591,9 +577,9 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                           <span>Benchmark Answer</span>
                         </div>
-                        <p className="text-xs text-slate-800 dark:text-slate-100 font-medium leading-relaxed whitespace-pre-line">
-                          {cp.benchmarkAnswer}
-                        </p>
+                        <div className="text-xs text-slate-800 dark:text-slate-100 font-medium leading-relaxed font-sans prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown>{cp.benchmarkAnswer}</ReactMarkdown>
+                        </div>
                       </div>
 
                       {/* Key Missed Points to Check Against */}

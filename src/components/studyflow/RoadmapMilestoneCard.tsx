@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -57,6 +57,7 @@ export interface RoadmapMilestoneCardProps {
     conceptId: string,
     newStatus: 'not_started' | 'learning' | 'mastered'
   ) => void;
+  onResetSectionProgress?: (sectionId: string) => void;
 }
 
 export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
@@ -79,6 +80,7 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
   onLaunchRecallDeck,
   onToggleConceptSkip,
   onToggleConceptStatus,
+  onResetSectionProgress,
 }) => {
   const [isCoreConceptsOpen, setIsCoreConceptsOpen] = useState(false);
   const [isGeneratingCheck, setIsGeneratingCheck] = useState(false);
@@ -113,23 +115,43 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
 
   const [concepts, setConcepts] = useState<ConceptItem[]>(initialConcepts);
 
+  // Synchronize concepts whenever initialConcepts updates (e.g. on reset or completion change)
+  useEffect(() => {
+    setConcepts(initialConcepts);
+  }, [initialConcepts]);
+
+  // Sync state with global storage resets or updates
+  const [syncVersion, setSyncVersion] = useState(0);
+  useEffect(() => {
+    const handleUpdate = () => setSyncVersion((v) => v + 1);
+    window.addEventListener('studyflow_cards_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('studyflow_cards_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
   // =========================================================================
   // RETENTION & MASTERY INDEX CALCULATION (3 SEQUENTIAL MODULES)
-  // Module 1 (Summary): Viewed / Read
-  // Module 2 (Checkpoints): 40% based on ratio of checkpoints marked Understood
-  // Module 3 (Recall Deck): 60% based on SM-2 card maturity and interval growth
+  // Read Summary & Notes: Viewed / Read
+  // Concept Check: 40% based on ratio of checkpoints marked Understood
+  // Active Recall Deck: 60% based on SM-2 card maturity and interval growth
   // Formula: Mastery Index = (CheckpointsScore * 0.4) + (RecallDeckScore * 0.6)
   // =========================================================================
 
-  // 1. Module 1 Read Status
+  // 1. Read Summary Status
   const isSummaryRead = useMemo(() => {
     try {
-      if (localStorage.getItem(`milestone_read_${section.id}`) === 'true') return true;
+      const stored = localStorage.getItem(`milestone_read_${section.id}`);
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
     } catch {}
-    return Boolean((section as any).summaryRead || section.completionRate > 0);
-  }, [section]);
+    if (section.completionRate === 0) return Boolean((section as any).summaryRead);
+    return Boolean((section as any).summaryRead || section.completionRate >= 50);
+  }, [section, syncVersion]);
 
-  // 2. Module 2 Checkpoints Data & Score
+  // 2. Concept Check Data & Score (40% Weight)
   const checkpointsData = useMemo(() => {
     let savedCPs: any[] | null = null;
     try {
@@ -152,15 +174,17 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
       understoodCount = 3;
     } else if (section.completionRate >= 45) {
       understoodCount = 1;
+    } else {
+      understoodCount = 0;
     }
 
     const scorePct = total > 0 ? Math.round((understoodCount / total) * 100) : 0;
     const isStarted = understoodCount > 0 || (savedCPs && savedCPs.some((c: any) => c.selfAssessment !== null));
 
     return { total, understoodCount, scorePct, isStarted };
-  }, [section]);
+  }, [section, syncVersion]);
 
-  // 3. Module 3 Recall Deck Data & Score
+  // 3. Active Recall Deck Data & Score (60% Weight)
   const recallDeckData = useMemo(() => {
     let savedCards: any[] | null = null;
     try {
@@ -205,15 +229,20 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
       scorePct = 0;
     }
 
+    const cardsDueCount = activeCards.length;
+
     return { totalCards, activeCardsCount: activeCards.length, matureCards, maxInterval, cardsDueCount, scorePct };
-  }, [section]);
+  }, [section, syncVersion]);
 
   // Overall Retention / Mastery Index: (CheckpointsScore * 0.4) + (RecallDeckScore * 0.6)
   const masteryIndex = useMemo(() => {
     if (section.isSkipped) return 0;
+    if (section.completionRate === 0 && (!checkpointsData.isStarted || checkpointsData.understoodCount === 0) && recallDeckData.matureCards === 0) {
+      return 0;
+    }
     const computed = Math.round(checkpointsData.scorePct * 0.4 + recallDeckData.scorePct * 0.6);
     return Math.min(100, Math.max(0, computed));
-  }, [section.isSkipped, checkpointsData.scorePct, recallDeckData.scorePct]);
+  }, [section.isSkipped, section.completionRate, checkpointsData, recallDeckData]);
 
   // Styling for mastery badge
   const getMasteryBadgeStyle = () => {
@@ -237,6 +266,48 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
       prev.map((c) => (c.id === conceptId ? { ...c, isSkipped: nextSkipped } : c))
     );
     onToggleConceptSkip?.(section.id, conceptId, nextSkipped);
+  };
+
+  const handleResetSectionProgress = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      localStorage.removeItem(`milestone_read_${section.id}`);
+      localStorage.removeItem(`milestone_checkpoints_${section.id}`);
+      localStorage.removeItem(`milestone_recall_deck_${section.id}`);
+      localStorage.removeItem(`recall_deck_${section.id}`);
+      localStorage.removeItem(`milestone_notes_${section.id}`);
+      localStorage.removeItem(`section_check_${section.id}`);
+      localStorage.removeItem(`quiz_${section.id}`);
+    } catch {}
+
+    setSyncVersion((v) => v + 1);
+
+    try {
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
+
+    if (onResetSectionProgress) {
+      onResetSectionProgress(section.id);
+    } else {
+      onSaveMilestoneQuestions?.(section.id, []);
+      onSaveMilestoneCards?.(
+        section.id,
+        (section.flashcards || []).map((fc) => ({
+          ...fc,
+          interval: 1,
+          repetition: 0,
+          easinessFactor: 2.5,
+          status: 'active',
+          lastRating: undefined,
+        }))
+      );
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
   };
 
   const handleConceptStatusToggle = (conceptId: string) => {
@@ -486,6 +557,18 @@ export const RoadmapMilestoneCard: React.FC<RoadmapMilestoneCardProps> = ({
                 <FileText className="w-3.5 h-3.5 text-slate-400" />
                 <span>Source Material</span>
               </button>
+
+              {(masteryIndex > 0 || isSummaryRead || checkpointsData.isStarted) && (
+                <button
+                  type="button"
+                  onClick={handleResetSectionProgress}
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-200 dark:border-slate-700 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  title="Reset progress for this section back to 0%"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset Section</span>
+                </button>
+              )}
             </div>
 
             {/* Core Concepts Toggle Button */}
