@@ -12,10 +12,13 @@ import {
   Check,
   X,
   Plus,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
 } from 'lucide-react';
 import { UserProfile, Exam, SubjectItem } from '../types';
 
-interface ProfileScreenProps {
+export interface ProfileScreenProps {
   user: UserProfile;
   exams: Exam[];
   subjects: SubjectItem[];
@@ -37,6 +40,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [editName, setEditName] = useState(user.name);
   const [editGrade, setEditGrade] = useState(user.grade);
   const [editEmail, setEditEmail] = useState(user.email);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Dynamic Level Calculation based on XP (250 XP per level)
@@ -225,19 +229,60 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       </div>
 
-      {/* Data Reset / New Student Clean Slate Option */}
+      {/* ⚠️ Advanced Developer / Reset Settings Accordion */}
       {onResetData && (
-        <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 text-center space-y-2">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Testing StudyFlow? You can reset your session to a brand-new student slate at any time.
-          </p>
+        <div className="rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-xs">
           <button
-            onClick={() => setShowResetConfirm(true)}
-            className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 text-slate-700 dark:text-slate-200 text-xs font-bold transition inline-flex items-center gap-1.5 cursor-pointer"
+            type="button"
+            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+            className="w-full px-5 py-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition cursor-pointer select-none"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset to Fresh Student State</span>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-base">⚠️</span>
+              <div className="min-w-0">
+                <span className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Advanced Developer / Reset Settings
+                </span>
+                <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500 truncate">
+                  Session data management, testing tools, and clean slate reset
+                </p>
+              </div>
+            </div>
+            <div className="text-slate-400 shrink-0">
+              {isAdvancedOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
           </button>
+
+          {isAdvancedOpen && (
+            <div className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-slate-800/80 space-y-4">
+              <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/40 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900 dark:text-amber-300 leading-relaxed font-medium">
+                  <strong>Warning:</strong> Resetting clears student history, personalized study plans, milestone progress, and flashcard recall interval state from your device storage.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Fresh Student State
+                  </div>
+                  <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                    Wipes existing session data to simulate a new user onboarding
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowResetConfirm(true)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 dark:bg-slate-800 dark:hover:bg-rose-950/60 dark:hover:text-rose-300 text-slate-700 dark:text-slate-300 text-xs font-bold border border-slate-200/80 dark:border-slate-700 hover:border-rose-200 dark:hover:border-rose-900/60 transition inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset to Fresh Student State</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -319,31 +364,41 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </div>
       )}
 
-      {/* Reset Confirmation Modal */}
+      {/* Two-Step Reset Confirmation Modal */}
       {showResetConfirm && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-            <h3 className="text-base font-black text-slate-900 dark:text-white">
-              Reset to Fresh Student?
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              This will clear all exams, study plans, tasks, and flashcards so you can test inputting fresh data from the beginning.
-            </p>
+          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-100 dark:border-rose-900/60 flex items-center justify-center text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-900 dark:text-white tracking-tight">
+                Reset to Fresh Student?
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
+                Are you sure? This will wipe your uploaded chapters, progress, and review decks. This action cannot be undone.
+              </p>
+            </div>
+
             <div className="pt-2 flex items-center justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setShowResetConfirm(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setShowResetConfirm(false);
                   if (onResetData) onResetData();
                 }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition shadow-2xs cursor-pointer"
+                className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-[0.99] text-white text-xs font-black transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
               >
-                Yes, Reset All
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Confirm Reset</span>
               </button>
             </div>
           </div>

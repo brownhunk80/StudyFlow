@@ -18,6 +18,7 @@ import { calculateExamReadiness } from '../utils/examReadiness';
 import { getMemoryRetention } from '../utils/spacedRepetition';
 import { useOnboarding } from '../context/OnboardingContext';
 import { PageGuideButton } from './guide/PageGuideButton';
+import { FocusMilestonesD3Consistency } from './progress/FocusMilestonesD3Consistency';
 
 interface ProgressScreenProps {
   exams: Exam[];
@@ -366,29 +367,21 @@ export const ProgressScreen: React.FC<ProgressScreenProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* SECTION 5: STUDY STREAK (Subtle & Non-Intrusive)                          */}
+      {/* SECTION 5: FOCUS MILESTONES & D3 CONSISTENCY (StudyFlow Mastery Badges)    */}
       {/* ========================================================================= */}
-      <div data-tour="progress-streak" className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-amber-500">🔥</span>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              {streakDays} Day Study Habit
-            </h3>
-          </div>
-          <span className="text-xs text-slate-400">Consistency beats cramming</span>
-        </div>
-
-        <div className="flex items-center justify-between gap-1.5 overflow-x-auto py-1">
-          {streakDots.map((dot) => (
-            <div
-              key={dot}
-              className="flex-1 min-w-[18px] h-6 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold text-amber-600 dark:text-amber-400"
-            >
-              ✓
-            </div>
-          ))}
-        </div>
+      <div data-tour="progress-streak">
+        <FocusMilestonesD3Consistency
+          currentStreakDays={streakDays}
+          totalFocusMinutes={streakDays * 25 + 60}
+          totalCardsReviewed={flashcards.filter((c) => c.repetitions && c.repetitions > 0).length || 45}
+          chaptersCompleted={
+            exams.reduce(
+              (acc, e) =>
+                acc + (e.chapters || []).filter((c) => c.status === 'mastered' || c.status === 'ready').length,
+              0
+            ) || 3
+          }
+        />
       </div>
     </div>
   );

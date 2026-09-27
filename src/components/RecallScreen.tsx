@@ -9,6 +9,7 @@ import {
   ChevronRight,
   BookOpen,
   Trash2,
+  Mic,
 } from 'lucide-react';
 import { Flashcard, FlashcardDeck, SubjectItem } from '../types';
 import { isCardDue } from '../utils/spacedRepetition';
@@ -199,19 +200,30 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
             </div>
           </div>
 
-          {/* Large, Obvious Primary Action */}
+          {/* Large, Obvious Primary Action with Dynamic Time Estimate */}
           <div className="pt-2">
-            <button
-              data-tour="recall-start-btn"
-              onClick={() => handleStart()}
-              className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-black text-base flex items-center justify-center gap-2.5 shadow-sm shadow-indigo-200 dark:shadow-none transition cursor-pointer group"
-            >
-              <Play className="w-5 h-5 fill-white group-hover:scale-110 transition" />
-              <span>START RECALL ({dueCards.length} DUE)</span>
-            </button>
-            <p className="text-center text-xs text-slate-400 mt-2.5">
-              Review each question, recall the answer, and rate your confidence to advance SM-2 intervals.
-            </p>
+            {(() => {
+              const dueCardsCount = dueCards.length;
+              const dynamicTimeEstimateMins = Math.max(1, Math.round(dueCardsCount * 0.5));
+              return (
+                <button
+                  data-tour="recall-start-btn"
+                  onClick={() => handleStart()}
+                  className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-black text-base flex items-center justify-center gap-2.5 shadow-sm shadow-indigo-200 dark:shadow-none transition cursor-pointer group"
+                >
+                  <Play className="w-5 h-5 fill-white group-hover:scale-110 transition" />
+                  <span>START RECALL ({dueCardsCount} DUE)</span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/20 text-white text-xs font-bold tracking-normal backdrop-blur-xs ml-1 border border-white/25">
+                    <Clock className="w-3.5 h-3.5 text-white/90" />
+                    <span>~{dynamicTimeEstimateMins} mins</span>
+                  </span>
+                </button>
+              );
+            })()}
+            <div className="flex items-center justify-center gap-1.5 text-center text-xs text-slate-500 dark:text-slate-400 mt-2.5">
+              <Mic className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+              <span>Voice recall enabled: Speak your answer for instant AI precision feedback</span>
+            </div>
           </div>
         </div>
       ) : (

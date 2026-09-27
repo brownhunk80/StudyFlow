@@ -19,6 +19,15 @@ interface TargetRect {
   right: number;
 }
 
+function safeQuerySelector(selector?: string): HTMLElement | null {
+  if (!selector) return null;
+  try {
+    return document.querySelector(selector) as HTMLElement | null;
+  } catch {
+    return null;
+  }
+}
+
 export const SpotlightTourOverlay: React.FC<SpotlightTourOverlayProps> = ({
   isOpen,
   steps,
@@ -41,7 +50,7 @@ export const SpotlightTourOverlay: React.FC<SpotlightTourOverlayProps> = ({
   const updatePosition = useCallback(() => {
     if (!step) return;
 
-    const el = document.querySelector(step.targetSelector) as HTMLElement | null;
+    const el = safeQuerySelector(step.targetSelector);
     if (!el) {
       setTargetRect(null);
       return;
@@ -96,9 +105,11 @@ export const SpotlightTourOverlay: React.FC<SpotlightTourOverlayProps> = ({
   useEffect(() => {
     if (!isOpen || !step) return;
 
-    const el = document.querySelector(step.targetSelector) as HTMLElement | null;
+    const el = safeQuerySelector(step.targetSelector);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch {}
     }
 
     // Give a short moment for smooth scroll then measure

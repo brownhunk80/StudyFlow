@@ -24,9 +24,12 @@ import {
   VolumeX,
   Loader2,
   RefreshCw,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Section, DocumentFlashcard } from '../../types';
+import { RecallSessionD3Distribution, CardSessionReviewItem } from './RecallSessionD3Distribution';
 
 export interface ActiveRecallCard {
   id: string;
@@ -95,6 +98,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
   const [aiTutorMessages, setAiTutorMessages] = useState<Array<{ sender: 'ai' | 'user'; text: string }>>([]);
   const [userQuery, setUserQuery] = useState('');
   const [sessionCompleted, setSessionCompleted] = useState(false);
+  const [sessionReviews, setSessionReviews] = useState<CardSessionReviewItem[]>([]);
   const [studyStats, setStudyStats] = useState({
     total: 0,
     understood: 0,
@@ -106,6 +110,37 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
   const [isLoadingCards, setIsLoadingCards] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Voice Answering & SpeechRecognition State
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [spokenTranscript, setSpokenTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [isEvaluatingVoice, setIsEvaluatingVoice] = useState(false);
+  const [voiceEvaluation, setVoiceEvaluation] = useState<any | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
+  const recognitionRef = React.useRef<any>(null);
+  const timerRef = React.useRef<any>(null);
+
+  const stopVoiceRecording = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+    setIsVoiceActive(false);
+    setInterimTranscript('');
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopVoiceRecording();
+    };
+  }, [stopVoiceRecording]);
 
   // Editor states
   const [newFront, setNewFront] = useState('');
@@ -225,11 +260,20 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
       existingList = milestone.flashcards;
     } else {
       try {
-        const cached = localStorage.getItem(`recall_deck_${milestone.id}`);
-        if (cached) {
-          const parsed = JSON.parse(cached);
+        const cached1 = localStorage.getItem(`milestone_recall_deck_${milestone.id}`);
+        if (cached1) {
+          const parsed = JSON.parse(cached1);
           if (Array.isArray(parsed) && parsed.length > 0) {
             existingList = parsed;
+          }
+        }
+        if (!existingList) {
+          const cached2 = localStorage.getItem(`recall_deck_${milestone.id}`);
+          if (cached2) {
+            const parsed = JSON.parse(cached2);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              existingList = parsed;
+            }
           }
         }
       } catch {
@@ -282,6 +326,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
         if (generatedList.length > 0) {
           milestone.recallDeck = generatedList;
           try {
+            localStorage.setItem(`milestone_recall_deck_${milestone.id}`, JSON.stringify(generatedList));
             localStorage.setItem(`recall_deck_${milestone.id}`, JSON.stringify(generatedList));
           } catch {}
           onUpdateCards?.(milestone.id, generatedList);
@@ -544,9 +589,27 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
 
       onUpdateCards?.(milestone.id, updatedAll);
 
+      // Record session review for D3 distribution
+      setSessionReviews((prev) => [
+        ...prev.filter((r) => r.id !== currentCard.id),
+        {
+          id: currentCard.id,
+          front: currentCard.promptQuestion || currentCard.front || currentCard.frontPrompt || '',
+          back: currentCard.answer || currentCard.back || currentCard.backAnswer || '',
+          parentConcept: currentCard.parentConcept,
+          rating: action,
+          voiceAccuracy: voiceEvaluation?.accuracyScore,
+          spokenTranscript: voiceEvaluation?.spokenTranscript || (spokenTranscript ? spokenTranscript : undefined),
+        },
+      ]);
+
       // Advance to next card or trigger session completion
       setIsRevealed(false);
       setShowAITutor(false);
+      setVoiceEvaluation(null);
+      setSpokenTranscript('');
+      setInterimTranscript('');
+      setVoiceError(null);
 
       if (currentIndex < activeCards.length - 1) {
         setCurrentIndex((prev) => prev + 1);
@@ -563,8 +626,141 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
         }
       }
     },
-    [currentCard, cards, activeCards.length, currentIndex, onUpdateCards, milestone, activeChapter]
+    [currentCard, cards, activeCards.length, currentIndex, onUpdateCards, milestone, activeChapter, voiceEvaluation, spokenTranscript]
   );
+
+  // Evaluate voice answer with AI
+  const evaluateSpokenResponse = async (transcriptText: string) => {
+    if (!currentCard || !transcriptText.trim()) return;
+
+    setIsEvaluatingVoice(true);
+    setVoiceError(null);
+
+    try {
+      const response = await fetch('/api/recall/evaluate-voice-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cardId: currentCard.id,
+          front: currentCard.promptQuestion || currentCard.front || currentCard.frontPrompt || '',
+          back: currentCard.answer || currentCard.back || currentCard.backAnswer || '',
+          notes: currentCard.explanation || '',
+          explanation: currentCard.explanation || '',
+          subject: subjectName || 'Science',
+          chapter: chapterTitle,
+          spokenTranscript: transcriptText.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Evaluation failed (HTTP ${response.status})`);
+      }
+
+      const evalData = await response.json();
+      setVoiceEvaluation(evalData);
+      setIsRevealed(true);
+
+      if (evalData.accuracyScore >= 80) {
+        confetti({
+          particleCount: 35,
+          spread: 45,
+          origin: { y: 0.6 },
+        });
+      }
+    } catch (err: any) {
+      console.warn('[FullScreenFlashcardStudy] Evaluation error:', err);
+      setVoiceError('Could not connect to AI evaluator. Review the model answer below.');
+      setIsRevealed(true);
+    } finally {
+      setIsEvaluatingVoice(false);
+    }
+  };
+
+  const startVoiceRecording = () => {
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionAPI) {
+      setVoiceError('Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
+    setSpokenTranscript('');
+    setInterimTranscript('');
+    setVoiceEvaluation(null);
+    setVoiceError(null);
+    setRecordingSeconds(0);
+
+    try {
+      const recognition = new SpeechRecognitionAPI();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event: any) => {
+        let finalTrans = '';
+        let interimTrans = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            finalTrans += item[0].transcript + ' ';
+          } else {
+            interimTrans += item[0].transcript;
+          }
+        }
+        if (finalTrans) {
+          setSpokenTranscript((prev) => (finalTrans.trim() ? finalTrans.trim() : prev));
+        }
+        setInterimTranscript(interimTrans);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('[SpeechRecognition] Error:', event.error);
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          setVoiceError('Microphone access was denied. Please allow microphone permissions.');
+        } else if (event.error === 'no-speech') {
+          // No speech detected
+        } else {
+          setVoiceError(`Microphone notice: ${event.error}`);
+        }
+        stopVoiceRecording();
+      };
+
+      recognition.onend = () => {
+        setIsVoiceActive(false);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+      setIsVoiceActive(true);
+
+      timerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn('[SpeechRecognition] Start failed:', err);
+      setVoiceError('Could not start microphone. Please check permissions.');
+      stopVoiceRecording();
+    }
+  };
+
+  const handleToggleVoice = () => {
+    if (isVoiceActive) {
+      const textToEval = (spokenTranscript + ' ' + interimTranscript).trim();
+      stopVoiceRecording();
+      if (textToEval.length > 0) {
+        setSpokenTranscript(textToEval);
+        evaluateSpokenResponse(textToEval);
+      } else {
+        setVoiceError('No speech was detected. Please try speaking clearly into your microphone.');
+      }
+    } else {
+      startVoiceRecording();
+    }
+  };
 
   // Mute / Disable Card handler (Trash/Archive icon)
   const handleDisableCard = useCallback(() => {
@@ -596,10 +792,21 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
         return;
       }
 
-      // Space / Enter -> "Check Your Recall"
+      // V -> Toggle Voice Answering
+      if (e.key.toLowerCase() === 'v' && !isRevealed) {
+        e.preventDefault();
+        handleToggleVoice();
+        return;
+      }
+
+      // Space / Enter -> "Check Your Recall" or finish speaking
       if ((e.code === 'Space' || e.key === 'Enter') && !isRevealed) {
         e.preventDefault();
-        setIsRevealed(true);
+        if (isVoiceActive) {
+          handleToggleVoice();
+        } else {
+          setIsRevealed(true);
+        }
         return;
       }
 
@@ -627,7 +834,7 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, sessionCompleted, activeTab, isRevealed, isLoadingCards, handleEvaluate, onClose]);
+  }, [isOpen, sessionCompleted, activeTab, isRevealed, isLoadingCards, isVoiceActive, spokenTranscript, interimTranscript, handleEvaluate, onClose]);
 
   // Handle AI Tutor follow-up query
   const handleSendAITutor = (e: React.FormEvent) => {
@@ -831,66 +1038,32 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
             </div>
           </div>
         ) : sessionCompleted ? (
-          /* Session Completion View */
-          <div className="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-950 border border-emerald-700/80 text-emerald-400 mx-auto flex items-center justify-center shadow-lg">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-xl sm:text-2xl font-black text-white">
-                Recall Session Complete!
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-400">
-                You tested all cards for <span className="text-white font-bold">{milestone.title}</span>.
-              </p>
-            </div>
-
-            {/* Performance Stats */}
-            <div className="grid grid-cols-3 gap-2.5 p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
-              <div className="p-2 text-center">
-                <div className="text-2xl font-black text-white">{studyStats.total}</div>
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Reviewed
-                </div>
-              </div>
-              <div className="p-2 text-center border-x border-slate-800">
-                <div className="text-2xl font-black text-emerald-400">{studyStats.understood}</div>
-                <div className="text-[10px] font-bold text-emerald-400/80 uppercase tracking-wider">
-                  Understood
-                </div>
-              </div>
-              <div className="p-2 text-center">
-                <div className="text-2xl font-black text-rose-400">{studyStats.relearned}</div>
-                <div className="text-[10px] font-bold text-rose-400/80 uppercase tracking-wider">
-                  Relearned
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setCurrentIndex(0);
-                  setIsRevealed(false);
-                  setSessionCompleted(false);
-                  setStudyStats({ total: 0, understood: 0, relearned: 0 });
-                }}
-                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>Study Again</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full py-3.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20"
-              >
-                <span>Return to Roadmap</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+          /* Session Completion View with D3 Confidence & Retention Distribution */
+          <div className="max-w-2xl w-full py-2">
+            <RecallSessionD3Distribution
+              sessionReviews={
+                sessionReviews.length > 0
+                  ? sessionReviews
+                  : cards.map((c) => ({
+                      id: c.id,
+                      front: c.promptQuestion || c.front || c.frontPrompt || '',
+                      back: c.answer || c.back || c.backAnswer || '',
+                      parentConcept: c.parentConcept,
+                      rating: (c.status === 'mastered' ? 'understood' : 'relearn') as any,
+                    }))
+              }
+              totalCards={activeCards.length}
+              chapterTitle={chapterTitle}
+              milestoneTitle={milestone.title}
+              onStudyAgain={() => {
+                setCurrentIndex(0);
+                setIsRevealed(false);
+                setSessionCompleted(false);
+                setSessionReviews([]);
+                setStudyStats({ total: 0, understood: 0, relearned: 0 });
+              }}
+              onClose={onClose}
+            />
           </div>
         ) : activeTab === 'edit' ? (
           /* Editor Mode */
@@ -1108,10 +1281,103 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
                 </div>
 
                 {/* ========================================================= */}
-                {/* 3. REVEALED STATE: EXPLANATION & SOURCES CITATION */}
+                {/* 3. REVEALED STATE: AI VOICE EVALUATION & EXPLANATIONS */}
                 {/* ========================================================= */}
                 {isRevealed && currentCard && (
-                  <div className="pt-4 border-t border-slate-800/80 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="pt-4 border-t border-slate-800/80 space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-200">
+                    {/* AI Voice Evaluation Card if voice was used */}
+                    {voiceEvaluation && (
+                      <div className="p-4 sm:p-5 rounded-2xl bg-indigo-950/60 border-2 border-indigo-500/60 space-y-3 shadow-lg">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-indigo-800/60">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-indigo-400" />
+                            <span className="text-xs font-black text-white">
+                              AI Spoken Recall Assessment
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
+                                voiceEvaluation.accuracyScore >= 85
+                                  ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                                  : voiceEvaluation.accuracyScore >= 65
+                                  ? 'bg-indigo-950 text-indigo-300 border-indigo-700'
+                                  : voiceEvaluation.accuracyScore >= 45
+                                  ? 'bg-amber-950 text-amber-300 border-amber-700'
+                                  : 'bg-rose-950 text-rose-300 border-rose-700'
+                              }`}
+                            >
+                              {voiceEvaluation.accuracyScore}% · {voiceEvaluation.verdictLabel}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsRevealed(false);
+                                setVoiceEvaluation(null);
+                                setSpokenTranscript('');
+                                setInterimTranscript('');
+                                startVoiceRecording();
+                              }}
+                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                              title="Re-record answer"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Re-Speak</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-indigo-900/40 space-y-0.5">
+                          <span className="font-bold text-slate-400 block text-[10px] uppercase">
+                            Your Spoken Explanation:
+                          </span>
+                          <p className="italic text-slate-100">"{voiceEvaluation.spokenTranscript}"</p>
+                        </div>
+
+                        {/* Key points covered / missed */}
+                        {((Array.isArray(voiceEvaluation.keyPointsCovered) && voiceEvaluation.keyPointsCovered.length > 0) ||
+                          (Array.isArray(voiceEvaluation.keyPointsMissed) && voiceEvaluation.keyPointsMissed.length > 0)) && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            {Array.isArray(voiceEvaluation.keyPointsCovered) && voiceEvaluation.keyPointsCovered.length > 0 && (
+                              <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 space-y-1">
+                                <span className="text-[10px] font-black uppercase text-emerald-300 flex items-center gap-1">
+                                  <Check className="w-3 h-3" /> Covered:
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                  {voiceEvaluation.keyPointsCovered.map((kp: string, idx: number) => (
+                                    <span key={idx} className="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-200 text-[10px]">
+                                      {kp}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {Array.isArray(voiceEvaluation.keyPointsMissed) && voiceEvaluation.keyPointsMissed.length > 0 && (
+                              <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-800/60 space-y-1">
+                                <span className="text-[10px] font-black uppercase text-amber-300 flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" /> Nuances to Add:
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                  {voiceEvaluation.keyPointsMissed.map((kp: string, idx: number) => (
+                                    <span key={idx} className="px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-200 text-[10px]">
+                                      {kp}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="p-3 rounded-xl bg-indigo-900/40 border border-indigo-700/60 text-xs text-indigo-200 leading-relaxed font-medium">
+                          💡 {voiceEvaluation.instantFeedback}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Explanation Box */}
                     {currentCard.explanation && (
                       <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/70 border border-slate-700/80 space-y-1.5 text-left shadow-xs">
@@ -1142,24 +1408,104 @@ export const FullScreenFlashcardStudy: React.FC<FullScreenFlashcardStudyProps> =
               {/* CARD BOTTOM ACTION CONTROLS */}
               <div className="pt-5 border-t border-slate-800/70 flex flex-col gap-3">
                 {!isRevealed ? (
-                  /* FRONT FACE ACTION: "I Tried to Recall It - Show Answer" (Hotkey: Space / Enter) */
-                  <button
-                    type="button"
-                    onClick={() => setIsRevealed(true)}
-                    className="w-full py-4 px-6 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm sm:text-base transition cursor-pointer flex items-center justify-center gap-3 shadow-xl hover:shadow-indigo-500/20 active:scale-[0.99]"
-                  >
-                    <Eye className="w-5 h-5 text-indigo-200" />
-                    <span>I Tried to Recall It - Show Answer</span>
-                    <div className="hidden sm:flex items-center gap-1">
-                      <kbd className="px-2 py-0.5 text-xs font-mono bg-indigo-700/80 border border-indigo-400/40 rounded-lg text-indigo-100">
-                        Space
-                      </kbd>
-                      <span className="text-indigo-300 text-xs">or</span>
-                      <kbd className="px-2 py-0.5 text-xs font-mono bg-indigo-700/80 border border-indigo-400/40 rounded-lg text-indigo-100">
-                        Enter
-                      </kbd>
-                    </div>
-                  </button>
+                  /* FRONT FACE CONTROLS: Voice Answering & Reveal */
+                  <div className="space-y-3">
+                    {/* Live Speech Recognition Recording State */}
+                    {isVoiceActive && (
+                      <div className="p-4 rounded-2xl bg-indigo-950/80 border-2 border-indigo-500 shadow-xl space-y-3 animate-in zoom-in-95 duration-150">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            {/* Animated wave bars */}
+                            <div className="flex items-center gap-1 h-4">
+                              <span className="w-1 bg-indigo-400 rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-2"></span>
+                              <span className="w-1 bg-indigo-400 rounded-full animate-[pulse_0.8s_ease-in-out_infinite_0.15s] h-4"></span>
+                              <span className="w-1 bg-indigo-400 rounded-full animate-[pulse_0.7s_ease-in-out_infinite_0.3s] h-3"></span>
+                              <span className="w-1 bg-indigo-400 rounded-full animate-[pulse_0.9s_ease-in-out_infinite_0.45s] h-5"></span>
+                            </div>
+                            <span className="text-xs font-bold text-indigo-200">
+                              Listening to your spoken answer...
+                            </span>
+                          </div>
+                          <span className="text-xs font-mono font-black text-indigo-300">
+                            {recordingSeconds}s
+                          </span>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-slate-950 border border-indigo-800/60 min-h-[45px] text-xs text-slate-200 italic leading-relaxed">
+                          {spokenTranscript || interimTranscript ? (
+                            <p>
+                              <span>{spokenTranscript} </span>
+                              {interimTranscript && (
+                                <span className="text-indigo-400 opacity-80">{interimTranscript}</span>
+                              )}
+                            </p>
+                          ) : (
+                            <span className="text-slate-500 not-italic">
+                              Speak out loud into your microphone...
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <button
+                            type="button"
+                            onClick={handleToggleVoice}
+                            disabled={isEvaluatingVoice}
+                            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-md"
+                          >
+                            {isEvaluatingVoice ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Evaluating with AI...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>Done Speaking & Grade Answer</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={stopVoiceRecording}
+                            className="text-xs font-bold text-slate-400 hover:text-white transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {voiceError && (
+                      <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-xs text-rose-300 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                        <span>{voiceError}</span>
+                      </div>
+                    )}
+
+                    {!isVoiceActive && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={handleToggleVoice}
+                          className="py-3.5 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-md hover:shadow-indigo-500/20 active:scale-[0.99]"
+                        >
+                          <Mic className="w-4 h-4 text-indigo-200" />
+                          <span>Speak Your Answer (V)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsRevealed(true)}
+                          className="py-3.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-2xs active:scale-[0.99]"
+                        >
+                          <Eye className="w-4 h-4 text-slate-400" />
+                          <span>Reveal Answer (Space)</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   /* REVEALED HORIZONTAL ACTION BAR: Disable Card, Forgot, Remembered */
                   <div className="space-y-3">

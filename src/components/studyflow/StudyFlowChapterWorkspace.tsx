@@ -33,6 +33,7 @@ import {
 } from '../../types';
 import { migrateChapterToLearnDocument } from '../../utils/learnDocumentMigration';
 import { RoadmapMilestoneCard } from './RoadmapMilestoneCard';
+import { extractSectionCheckpoints } from '../../utils/sectionCheckpointExtractor';
 import { MilestoneReaderView } from './MilestoneReaderView';
 import { MilestoneCheckpointsRunner } from './MilestoneCheckpointsRunner';
 import { MilestoneRecallDeckRunner } from './MilestoneRecallDeckRunner';
@@ -166,24 +167,58 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
       if (res.ok) {
         const detail = await res.json();
 
-        const newFlashcards: DocumentFlashcard[] = (detail.recallDeck || []).map((rc: any, cIdx: number) => ({
-          id: `dfc-${sec.id}-${cIdx + 1}`,
-          sectionId: sec.id,
-          frontPrompt: rc.front || `Key prompt for ${sec.title}`,
-          backAnswer: rc.explanation
-            ? `${rc.back}\n\n💡 *Explanation*: ${rc.explanation}`
-            : rc.sourceExcerpt
-              ? `${rc.back}\n\n📖 *Source*: ${rc.sourceExcerpt}`
-              : rc.back || 'Reference answer',
-          sourceContext: `${chapter.name} • ${sec.title}`,
-          interval: 1,
-          repetition: 0,
-          easinessFactor: 2.5,
-          status: 'active' as const,
-          dueDate: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }));
+        const rawRecallItems = Array.isArray(detail.recallDeck) && detail.recallDeck.length > 0
+          ? detail.recallDeck
+          : Array.isArray(detail.cards) && detail.cards.length > 0
+          ? detail.cards
+          : [];
+
+        const newFlashcards: DocumentFlashcard[] = rawRecallItems.map((rc: any, cIdx: number) => {
+          const front =
+            (typeof rc.front === 'string' && rc.front.trim()) ||
+            (typeof rc.frontPrompt === 'string' && rc.frontPrompt.trim()) ||
+            (typeof rc.promptQuestion === 'string' && rc.promptQuestion.trim()) ||
+            (typeof rc.prompt === 'string' && rc.prompt.trim()) ||
+            (typeof rc.question === 'string' && rc.question.trim()) ||
+            `Key recall prompt for ${sec.title}`;
+
+          const rawBack =
+            (typeof rc.back === 'string' && rc.back.trim()) ||
+            (typeof rc.backAnswer === 'string' && rc.backAnswer.trim()) ||
+            (typeof rc.inlineAnswer === 'string' && rc.inlineAnswer.trim()) ||
+            (typeof rc.answer === 'string' && rc.answer.trim()) ||
+            (typeof rc.sampleAnswer === 'string' && rc.sampleAnswer.trim()) ||
+            'Core model answer and reference rationale.';
+
+          const explanation = rc.explanation || '';
+          const sourceExcerpt = rc.sourceExcerpt || rc.sourceQuote || '';
+
+          const backAnswer = explanation
+            ? `${rawBack}\n\n💡 *Explanation*: ${explanation}`
+            : sourceExcerpt
+              ? `${rawBack}\n\n📖 *Source*: ${sourceExcerpt}`
+              : rawBack;
+
+          return {
+            id: `dfc-${sec.id}-${cIdx + 1}`,
+            sectionId: sec.id,
+            frontPrompt: front,
+            backAnswer,
+            front,
+            back: rawBack,
+            parentConcept: rc.parentConcept || sec.title,
+            explanation,
+            sourceExcerpt,
+            sourceContext: `${chapter.name} • ${sec.title}`,
+            interval: 1,
+            repetition: 0,
+            easinessFactor: 2.5,
+            status: 'active' as const,
+            dueDate: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+        });
 
         const newQuizQuestions: QuizQuestion[] = (detail.checkLearning || []).map((q: any, qIdx: number) => ({
           id: `qq-${sec.id}-${qIdx + 1}`,
@@ -239,8 +274,17 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             localStorage.setItem(`milestone_recall_deck_${sec.id}`, JSON.stringify(newFlashcards));
             localStorage.setItem(`recall_deck_${sec.id}`, JSON.stringify(newFlashcards));
           }
+          // Pre-warm Module 2 checkpoints if not already stored
+          const existingCPs = localStorage.getItem(`milestone_checkpoints_${sec.id}`);
+          if (!existingCPs) {
+            const initialCPs = extractSectionCheckpoints(updatedSection, chapter.name, subject?.name || 'Science');
+            if (initialCPs.length > 0) {
+              localStorage.setItem(`milestone_checkpoints_${sec.id}`, JSON.stringify(initialCPs));
+            }
+          }
           localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(next));
           window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+          window.dispatchEvent(new Event('storage'));
         } catch {
           // ignore
         }
@@ -290,19 +334,25 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   // Helper to compute a milestone's Recall Deck score (0 - 100)
   const getMilestoneRecallScore = (sectionId: string): number => {
     try {
-      const saved = localStorage.getItem(`milestone_recall_deck_${sectionId}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const active = parsed.filter((c: any) => c.status !== 'disabled');
-          const mature = active.filter(
-            (c: any) => c.interval >= 3 || c.repetition >= 2 || c.status === 'mastered'
-          ).length;
-          const understood = active.filter((c: any) => c.lastRating === 'understood').length;
-          return active.length > 0
-            ? Math.min(100, Math.round(((mature + understood * 0.5) / active.length) * 100))
-            : 0;
-        }
+      let parsed: any = null;
+      const saved1 = localStorage.getItem(`milestone_recall_deck_${sectionId}`);
+      if (saved1) {
+        parsed = JSON.parse(saved1);
+      }
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+        const saved2 = localStorage.getItem(`recall_deck_${sectionId}`);
+        if (saved2) parsed = JSON.parse(saved2);
+      }
+
+      if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+        const active = parsed.filter((c: any) => c.status !== 'disabled');
+        const mature = active.filter(
+          (c: any) => c.interval >= 3 || c.repetition >= 2 || c.status === 'mastered'
+        ).length;
+        const understood = active.filter((c: any) => c.lastRating === 'understood').length;
+        return active.length > 0
+          ? Math.min(100, Math.round(((mature + understood * 0.5) / active.length) * 100))
+          : 0;
       }
     } catch {}
     const sec = sections.find((s) => s.id === sectionId);
@@ -365,6 +415,8 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   const handleSaveCheckpoints = (sectionId: string, checkpoints: any[], scorePct: number) => {
     try {
       localStorage.setItem(`milestone_checkpoints_${sectionId}`, JSON.stringify(checkpoints));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
     } catch {}
     const recallScore = getMilestoneRecallScore(sectionId);
     const newMasteryIndex = Math.min(100, Math.round(scorePct * 0.4 + recallScore * 0.6));

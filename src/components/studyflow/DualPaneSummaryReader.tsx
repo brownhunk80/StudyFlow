@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Section, SummaryMode, KnowledgeQuestion } from '../../types';
-import { extractSectionCheckpoints } from '../../utils/sectionCheckpointExtractor';
+import { extractSectionCheckpoints, isStaleBoilerplateText } from '../../utils/sectionCheckpointExtractor';
 
 export interface CheckpointItem {
   id: string;
@@ -76,12 +76,8 @@ export const DualPaneSummaryReader: React.FC<DualPaneSummaryReaderProps> = ({
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const isStale = parsed.some((cp: any) => {
-            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''}`;
-            return (
-              combined.includes('constitutive transfer equation') ||
-              combined.includes('quasi-static') ||
-              combined.includes('keeping milliamperes instead of amperes')
-            );
+            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''} ${JSON.stringify(cp.keyScoringPoints || cp.keyMissedPoints || [])}`;
+            return isStaleBoilerplateText(combined);
           });
           if (!isStale) {
             return parsed.map((cp: any) => ({
@@ -89,8 +85,9 @@ export const DualPaneSummaryReader: React.FC<DualPaneSummaryReaderProps> = ({
               prompt: cp.prompt,
               benchmarkAnswer: cp.benchmarkAnswer,
               keyMissedPoints: cp.keyScoringPoints || cp.keyMissedPoints || [
-                'Directly states the governing rule of this section',
-                'Demonstrates clear physical causality and correct condition checks',
+                'Directly articulates the core principle or definition of this section',
+                'Explains the underlying mechanism or reasoning with curriculum accuracy',
+                'Identifies key distinctions and application criteria without generalizations',
               ],
               userAnswer: cp.userResponse || cp.userAnswer || '',
               isRevealed: cp.isRevealed ?? false,
@@ -102,7 +99,7 @@ export const DualPaneSummaryReader: React.FC<DualPaneSummaryReaderProps> = ({
     } catch {}
 
     // 2. Extract section-grounded checkpoints strictly for this section
-    const extracted = extractSectionCheckpoints(section);
+    const extracted = extractSectionCheckpoints(section, documentName, subjectName);
     return extracted.map((cp) => ({
       id: cp.id,
       prompt: cp.prompt,
@@ -112,7 +109,7 @@ export const DualPaneSummaryReader: React.FC<DualPaneSummaryReaderProps> = ({
       isRevealed: false,
       selfAssessment: cp.selfAssessment,
     }));
-  }, [section]);
+  }, [section, documentName, subjectName]);
 
   const [checkpoints, setCheckpoints] = useState<CheckpointItem[]>(initialCheckpoints);
   const [isAddingCheckpoint, setIsAddingCheckpoint] = useState(false);
@@ -220,6 +217,11 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
       cp.id === checkpointId ? { ...cp, selfAssessment: assessment } : cp
     );
     setCheckpoints(updated);
+    try {
+      localStorage.setItem(`milestone_checkpoints_${section.id}`, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch {}
 
     // Compute completion rate based on self-assessments
     const understoodCount = updated.filter((cp) => cp.selfAssessment === 'understood').length;
@@ -250,9 +252,9 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
       prompt: newPromptText.trim(),
       benchmarkAnswer: newBenchmarkText.trim(),
       keyMissedPoints: [
-        'Precise definition of primary terms',
-        'State underlying assumptions & boundary conditions',
-        'SI unit and sign convention consistency',
+        'Precise definition of primary terms from this section',
+        'Clear articulation of underlying reasoning or mechanism',
+        'Specific application criteria and contextual distinctions',
       ],
       userAnswer: '',
       isRevealed: false,
@@ -448,7 +450,7 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-amber-950 dark:text-amber-200 leading-relaxed font-medium">
-                  When answering subjective board questions on <strong>{section.title}</strong>, examiners award partial marks on reasoning: define the principle clearly, write the general equation symbolically with boundary conditions, and highlight the numerical result with appropriate physical units.
+                  When answering questions on <strong>{section.title}</strong>, examiners award marks for structured clarity: define core principles accurately, explain the underlying rationale with relevant curriculum examples, and address key criteria or safeguards directly.
                 </p>
               </div>
             </div>
@@ -484,10 +486,37 @@ External stimuli acting upon the system induce equal and opposite reactive adjus
               </div>
             </div>
 
-            {/* Subtext */}
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-              Active recall checkpoints based on this summary
-            </p>
+            {/* Subtext and Refresh Button */}
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
+                Active recall checkpoints grounded exclusively in this section
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem(`milestone_checkpoints_${section.id}`);
+                  } catch {}
+                  const extracted = extractSectionCheckpoints(section, documentName, subjectName);
+                  setCheckpoints(
+                    extracted.map((cp) => ({
+                      id: cp.id,
+                      prompt: cp.prompt,
+                      benchmarkAnswer: cp.benchmarkAnswer,
+                      keyMissedPoints: cp.keyScoringPoints,
+                      userAnswer: '',
+                      isRevealed: false,
+                      selfAssessment: null,
+                    }))
+                  );
+                }}
+                className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 flex items-center gap-1 transition cursor-pointer shrink-0"
+                title="Refresh checkpoints from section text"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reload</span>
+              </button>
+            </div>
           </div>
 
           {/* Numbered Checkpoint Cards */}

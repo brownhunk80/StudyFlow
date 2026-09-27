@@ -35,27 +35,27 @@ function generateDefaultCuratedCardsForSection(
     {
       id: `card-learn-${section.id}-1`,
       front: `State the foundational definition and primary significance of ${t0}.`,
-      back: `${t0} represents the core mechanism in ${secTitle}. It defines how fundamental quantities interact under boundary conditions and governs invariant system behaviors.`,
+      back: `${t0} represents the core concept in ${secTitle}. It defines key principles and establishes foundational criteria for understanding the material.`,
     },
     {
       id: `card-learn-${section.id}-2`,
-      front: `What governing law or invariant principle applies to transformations in ${secTitle}?`,
-      back: `Conservation principles and equilibrium laws require that total energy and momentum remain invariant across closed reference boundaries in ${secTitle}.`,
+      front: `What core principle or operational rule applies to ${secTitle}?`,
+      back: `It establishes the essential framework and relationship that governs outcomes and practical applications within ${secTitle}.`,
     },
     {
       id: `card-learn-${section.id}-3`,
-      front: `What is the most frequent exam misconception or calculation trap regarding ${t1}?`,
-      back: `A common error is omitting directional sign conventions or applying equilibrium formulas outside their validity assumptions in ${secTitle}.`,
+      front: `What is the most frequent examination misconception regarding ${t1}?`,
+      back: `A common error is confusing ${t1} with adjacent terms or providing vague generalizations without addressing the specific criteria taught in ${secTitle}.`,
     },
     {
       id: `card-learn-${section.id}-4`,
-      front: `Describe the standard analytical problem-solving sequence for evaluating ${t2}.`,
-      back: `1. Identify boundary parameters and unknowns.\n2. Select the governing constitutive equation.\n3. Verify dimensional consistency and substitute known values.`,
+      front: `Describe the standard analytical framework for evaluating ${t2}.`,
+      back: `1. Define primary criteria and objectives.\n2. Apply the specific rules and contextual distinctions established in ${secTitle}.\n3. Verify against edge cases or common limitations.`,
     },
     {
       id: `card-learn-${section.id}-5`,
-      front: `How does understanding ${secTitle} synthesize with broader concepts in ${chapterName}?`,
-      back: `${secTitle} provides the foundational bridge connecting microscopic interactions with observed macroscopic phenomena throughout ${chapterName}.`,
+      front: `How does understanding ${secTitle} connect with broader concepts in ${chapterName}?`,
+      back: `${secTitle} provides the essential conceptual foundation that supports advanced analysis and thematic connections throughout ${chapterName}.`,
     },
   ];
 

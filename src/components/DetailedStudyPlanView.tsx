@@ -246,6 +246,23 @@ export const DetailedStudyPlanView: React.FC<DetailedStudyPlanViewProps> = ({
         });
       }
 
+      const todayList = newTasks.filter((t) => t.dateCategory === 'today');
+      const upcomingList = newTasks.filter((t) => t.dateCategory !== 'today');
+      const planPayload = {
+        id: `plan-${Date.now()}`,
+        examId: activeExam.id,
+        examName: activeExam.name,
+        generatedAt: new Date().toISOString(),
+        todaySessions: todayList,
+        upcomingSessions: upcomingList,
+      };
+
+      try {
+        localStorage.setItem('study_plan', JSON.stringify(planPayload));
+        window.dispatchEvent(new CustomEvent('studyflow_plan_updated', { detail: planPayload }));
+        window.dispatchEvent(new Event('storage'));
+      } catch {}
+
       if (onScheduleTasks) {
         onScheduleTasks(newTasks);
       }

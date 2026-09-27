@@ -58,6 +58,7 @@ import {
   extractLearnTabDecksAndCards,
   syncReviewedCardToLearnStorage,
 } from './utils/learnDeckSync';
+import { safeSetItem } from './utils/storageUtils';
 
 const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v5_dynamic_milestones';
 if (typeof window !== 'undefined') {
@@ -85,8 +86,12 @@ if (typeof window !== 'undefined') {
 export default function App() {
   // Auth state (starts logged in to immediately show working student dashboard, but can log out)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const saved = localStorage.getItem('studyflow_auth');
-    return saved !== null ? JSON.parse(saved) : true;
+    try {
+      const saved = localStorage.getItem('studyflow_auth');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
   });
 
   // Dark mode
@@ -315,33 +320,33 @@ export default function App() {
     exam?: Exam;
   } | null>(null);
 
-  // Sync state to local storage
+  // Sync state to local storage safely with quota mitigation
   useEffect(() => {
-    localStorage.setItem('studyflow_auth', JSON.stringify(isAuthenticated));
+    safeSetItem('studyflow_auth', isAuthenticated);
   }, [isAuthenticated]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_user', JSON.stringify(user));
+    safeSetItem('studyflow_user', user);
   }, [user]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_subjects', JSON.stringify(subjects));
+    safeSetItem('studyflow_subjects', subjects);
   }, [subjects]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_exams', JSON.stringify(exams));
+    safeSetItem('studyflow_exams', exams);
   }, [exams]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_tasks', JSON.stringify(tasks));
+    safeSetItem('studyflow_tasks', tasks);
   }, [tasks]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_flashcards', JSON.stringify(flashcards));
+    safeSetItem('studyflow_flashcards', flashcards);
   }, [flashcards]);
 
   useEffect(() => {
-    localStorage.setItem('studyflow_decks', JSON.stringify(decks));
+    safeSetItem('studyflow_decks', decks);
   }, [decks]);
 
   // Handler: Update User Profile
@@ -478,7 +483,22 @@ export default function App() {
         }
       });
 
-      return [...uniqueNewTasks, ...tasksForOtherSubjects, ...completedTasks];
+      const combinedList = [...uniqueNewTasks, ...tasksForOtherSubjects, ...completedTasks];
+
+      try {
+        const todaySessions = combinedList.filter((t) => t.dateCategory === 'today' && !t.completed);
+        const upcomingSessions = combinedList.filter((t) => t.dateCategory !== 'today');
+        const planPayload = {
+          id: `plan-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          todaySessions,
+          upcomingSessions,
+        };
+        localStorage.setItem('study_plan', JSON.stringify(planPayload));
+        window.dispatchEvent(new CustomEvent('studyflow_plan_updated', { detail: planPayload }));
+      } catch {}
+
+      return combinedList;
     });
   };
 
@@ -801,21 +821,13 @@ export default function App() {
       targetExam = newExam;
       setExams((prev) => {
         const next = [...prev, newExam];
-        try {
-          localStorage.setItem('studyflow_exams', JSON.stringify(next));
-        } catch (err) {
-          console.warn('Failed to save exams', err);
-        }
+        safeSetItem('studyflow_exams', next);
         return next;
       });
     } else {
       setExams((prev) => {
         const next = prev.map((e) => (e.id === activeExamId ? { ...e, chapters: [...e.chapters, newChap] } : e));
-        try {
-          localStorage.setItem('studyflow_exams', JSON.stringify(next));
-        } catch (err) {
-          console.warn('Failed to save exams', err);
-        }
+        safeSetItem('studyflow_exams', next);
         return next;
       });
     }
@@ -837,11 +849,7 @@ export default function App() {
             }
           : e
       );
-      try {
-        localStorage.setItem('studyflow_exams', JSON.stringify(next));
-      } catch (err) {
-        console.warn('Failed to save exams', err);
-      }
+      safeSetItem('studyflow_exams', next);
       return next;
     });
   };
@@ -867,7 +875,10 @@ export default function App() {
                         title: docData.documentName,
                         content: docData.rawText,
                         fileName: docData.documentName,
-                        fileData: docData.documentUrl,
+                        fileData:
+                          docData.documentUrl && docData.documentUrl.startsWith('data:') && docData.documentUrl.length > 500
+                            ? undefined
+                            : docData.documentUrl,
                         uploadedAt: new Date().toISOString(),
                       },
                     ]
@@ -885,11 +896,7 @@ export default function App() {
             }
           : e
       );
-      try {
-        localStorage.setItem('studyflow_exams', JSON.stringify(next));
-      } catch (err) {
-        console.warn('Failed to save exams', err);
-      }
+      safeSetItem('studyflow_exams', next);
       return next;
     });
   };

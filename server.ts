@@ -22,6 +22,11 @@ import {
   generateConceptualCheckpoints,
   GenerateCheckpointsRequestSchema,
 } from './src/api/checkpoints/generate';
+import { evaluateStudentBlurt } from './src/api/checkpoints/evaluate-blurt';
+import {
+  evaluateVoiceAnswer,
+  VoiceRecallEvaluationRequestSchema,
+} from './src/api/recall/evaluate-voice-answer';
 
 const app = express();
 const PORT = 3000;
@@ -84,8 +89,8 @@ async function generateGeminiContent(
   const models = [
     preferred,
     'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
   ];
   const uniqueModels = Array.from(new Set(models)).filter((m) => m !== 'gemini-2.5-flash');
 
@@ -349,6 +354,39 @@ app.post('/api/check-learning/generate', async (req, res) => {
 });
 
 // -------------------------------------------------------------
+// Voice Recall Flashcard Answer Evaluator (SpeechRecognition AI Feedback)
+// -------------------------------------------------------------
+app.post('/api/recall/evaluate-voice-answer', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+    const validationResult = VoiceRecallEvaluationRequestSchema.safeParse(rawBody);
+
+    if (!validationResult.success) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Invalid voice evaluation request parameters.',
+        details: validationResult.error.format(),
+      });
+    }
+
+    const evaluation = await evaluateVoiceAnswer(
+      validationResult.data,
+      process.env.GEMINI_API_KEY
+    );
+
+    return res.status(200).json(evaluation);
+  } catch (error: any) {
+    console.error('Error in /api/recall/evaluate-voice-answer:', error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'EVALUATION_ERROR',
+      message: error.message || 'Failed to evaluate voice answer.',
+    });
+  }
+});
+
+
+// -------------------------------------------------------------
 // Module 2: Rigorous Conceptual Checkpoints Generator
 // Deterministic Closed-Book Extraction & Synthesis
 // -------------------------------------------------------------
@@ -368,9 +406,12 @@ app.post('/api/checkpoints/generate', async (req, res) => {
             : [milestoneTitle];
     const sectionTextExcerpt = rawBody.sectionTextExcerpt ?? rawBody.textExcerpt ?? '';
 
+    const subjectName = rawBody.subjectName || rawBody.subject || '';
+
     const validationResult = GenerateCheckpointsRequestSchema.safeParse({
       chapterTitle,
       milestoneTitle,
+      subjectName,
       topicTags,
       sectionTextExcerpt,
     });
@@ -391,6 +432,57 @@ app.post('/api/checkpoints/generate', async (req, res) => {
     return res.status(status).json({
       error: error.code || 'GENERATION_ERROR',
       message: error.message || 'Failed to generate conceptual checkpoints.',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Active Recall Blurting Evaluator (Concept Check Grounded Analysis)
+// -------------------------------------------------------------
+app.post('/api/checkpoints/evaluate-blurt', async (req, res) => {
+  try {
+    const rawBody = req.body || {};
+    const chapterTitle = rawBody.chapterTitle || rawBody.chapterName || 'Chapter';
+    const milestoneTitle = rawBody.milestoneTitle || rawBody.title || 'Section';
+    const subjectName = rawBody.subjectName || rawBody.subject || 'Science';
+    const sectionExcerpt = rawBody.sectionExcerpt || rawBody.sectionTextExcerpt || '';
+    const studentBlurt = rawBody.studentBlurt || rawBody.blurtText || '';
+
+    if (!studentBlurt || studentBlurt.trim().length < 5) {
+      return res.status(400).json({
+        error: 'EMPTY_BLURT',
+        message: 'Please write or dictate at least a few sentences of what you recall before evaluating.',
+      });
+    }
+
+    const ai = getAI();
+    if (!ai) {
+      // Fallback if no Gemini key
+      const fallbackResult = await evaluateStudentBlurt(null as any, {
+        chapterTitle,
+        milestoneTitle,
+        subjectName,
+        sectionExcerpt,
+        studentBlurt,
+      });
+      return res.status(200).json(fallbackResult);
+    }
+
+    const result = await evaluateStudentBlurt(ai, {
+      chapterTitle,
+      milestoneTitle,
+      subjectName,
+      sectionExcerpt,
+      studentBlurt,
+    });
+
+    return res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error in /api/checkpoints/evaluate-blurt:', error);
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'BLURT_EVALUATION_ERROR',
+      message: error.message || 'Failed to evaluate active recall blurt.',
     });
   }
 });
@@ -520,47 +612,42 @@ Return pure JSON with no markdown wrapping:
 
     // High quality fallback if key not configured
     return res.json({
-      summary: `${chapterName} covers the fundamental mechanisms, quantitative relationships, and core principles governing ${subject || 'this curriculum'}. Mastery of this chapter requires understanding underlying assumptions and distinguishing boundary conditions.`,
+      summary: `${chapterName} covers the foundational concepts, core principles, and systematic applications for ${subject || 'this curriculum'}. Mastery of this chapter requires understanding key definitions, operational mechanisms, and critical distinctions.`,
       keyConcepts: [
         {
-          term: 'Fundamental Principle & Governing Law',
-          explanation: `The primary theoretical framework behind ${chapterName} defining how inputs transform into observable state changes.`,
+          term: 'Foundational Principles & Definitions',
+          explanation: `The primary theoretical framework behind ${chapterName} establishing core terminology and baseline criteria.`,
           importance: 'critical',
         },
         {
-          term: 'Equilibrium & Conservation State',
-          explanation: `The steady-state behavior and invariant quantities that must be conserved across transformations.`,
+          term: 'Operational Mechanisms & Function',
+          explanation: `How key components and principles interact to produce observed outcomes within this topic.`,
           importance: 'high',
         },
         {
-          term: 'Boundary Conditions & Limits',
-          explanation: `Extreme or threshold conditions under which standard approximations break down or behavior changes qualitatively.`,
+          term: 'Standards of Application & Exceptions',
+          explanation: `Specific criteria, safeguards, or boundaries under which standard rules apply or need qualification.`,
           importance: 'medium',
         },
       ],
       formulasOrLaws: [
         {
-          name: `${chapterName} Primary Equation`,
-          formula: 'ΔState = Rate × Time + InitialConditions',
-          notes: 'Ensure all SI units are converted before numerical substitution.',
-        },
-        {
-          name: 'Conservation Relation',
-          formula: 'Total_initial = Total_final + Dissipated_loss',
-          notes: 'Valid for closed, isolated thermodynamic/physical systems.',
+          name: `${chapterName} Core Formulation`,
+          formula: 'Core Framework: Input / Cause → Operational Mechanism → Result / Effect',
+          notes: 'Ensure all criteria and foundational terms are clearly defined.',
         },
       ],
       commonTraps: [
-        'Failing to convert standard units (e.g. grams to kilograms, Celsius to Kelvin, minutes to seconds).',
-        'Applying formulas outside their domain of validity (e.g. assuming constant temperature or zero friction).',
-        'Confusing rate of change with instantaneous value in multi-step problems.',
+        'Giving overly vague, colloquial definitions rather than curriculum-standard terminology.',
+        'Confusing cause and effect or confusing distinct categories within this chapter.',
+        'Overlooking critical limitations, conditions, or protective safeguards.',
       ],
       examTips: [
-        'State your starting equation before substituting numbers to secure partial marks.',
-        'Sanity check your final answers against realistic physical or real-world dimensions.',
+        'State foundational definitions clearly before providing detailed explanations.',
+        'Support your answers with concrete examples and structured bullet points.',
       ],
       mnemonics: [
-        'S-P-E-C: State given, Pick formula, Evaluate units, Calculate & verify.',
+        'S-T-E-P: State definition, Trace mechanism, Explain significance, Provide examples.',
       ],
     });
   } catch (error: any) {
@@ -616,33 +703,33 @@ Return pure JSON with no markdown wrapping:
     return res.json({
       cards: [
         {
-          front: `What is the core definition and physical significance of "${topic}"?`,
-          back: `It represents the fundamental governing relationship in ${subject || 'the course'}, describing how state variables interact under defined conditions.`,
-          clozeHint: 'Recall the governing equation',
+          front: `What is the core definition and primary significance of "${topic}"?`,
+          back: `It represents a central concept in ${subject || 'the course'}, establishing essential principles, defining scope, and guiding systematic analysis.`,
+          clozeHint: 'Core definition and role',
           chapter: chapterName || topic,
         },
         {
-          front: `What are the necessary boundary conditions required to apply formulas in "${topic}"?`,
-          back: `The system must be closed, ideal assumptions must hold, and environmental perturbations must be accounted for or assumed negligible.`,
-          clozeHint: 'Assumptions and domain limits',
+          front: `What key criteria or standards govern the application of "${topic}"?`,
+          back: `Clear definitional criteria must be met, relevant context and conditions verified, and domain-specific limitations acknowledged.`,
+          clozeHint: 'Application criteria and standards',
           chapter: chapterName || topic,
         },
         {
-          front: `What is the most frequent misconception students make when calculating parameters in "${topic}"?`,
-          back: `Neglecting dimensional unit conversion and confusing scalar magnitude with vector direction or sign conventions.`,
+          front: `What is the most frequent misconception students have regarding "${topic}"?`,
+          back: `Providing overly broad generalizations, confusing related subtopics, or overlooking necessary exceptions and criteria.`,
           clozeHint: 'Exam pitfalls',
           chapter: chapterName || topic,
         },
         {
-          front: `How does an increase in temperature/pressure or intensity impact the reaction/rate in "${topic}"?`,
-          back: `It shifts the dynamic equilibrium according to Le Chatelier / thermodynamic kinetic principles, accelerating the forward progression.`,
-          clozeHint: 'Kinetic & equilibrium shift',
+          front: `How does "${topic}" connect with broader themes in ${chapterName || 'this chapter'}?`,
+          back: `It provides a critical conceptual foundation that links foundational definitions with practical applications and analytical problem solving.`,
+          clozeHint: 'Thematic connection',
           chapter: chapterName || topic,
         },
         {
-          front: `Provide the step-by-step problem verification protocol for "${topic}".`,
-          back: `1. List knowns & unknowns\n2. Select fundamental relation\n3. Match units\n4. Solve algebraically\n5. Check order of magnitude.`,
-          clozeHint: 'Problem-solving sequence',
+          front: `Provide the step-by-step analytical approach for evaluating "${topic}".`,
+          back: `1. Define primary terms and context\n2. Identify governing rules or relationships\n3. Apply systematic reasoning\n4. Verify against edge cases or common exceptions.`,
+          clozeHint: 'Analytical sequence',
           chapter: chapterName || topic,
         },
       ],
@@ -2488,41 +2575,42 @@ Return pure JSON with no markdown wrapping:
 
     // High quality fallback
     return res.json({
-      summary: `Synthesized study notes for ${chapterName}. Based on uploaded materials, this chapter emphasizes governing fundamental relationships, experimental constraints, and systematic problem solving in ${subject || 'the course'}.`,
+      summary: `Synthesized study notes for ${chapterName}. Based on uploaded materials, this chapter emphasizes key concepts, systematic reasoning, and practical applications in ${subject || 'the course'}.`,
       keyConcepts: [
         {
-          term: 'Fundamental Mechanism',
-          explanation: `The foundational law extracted from the chapter materials governing state evolution.`,
+          term: 'Fundamental Principles',
+          explanation: `The foundational concepts extracted from the chapter materials defining core principles and terminology.`,
           importance: 'critical',
         },
         {
-          term: 'Equilibrium & Conservation State',
-          explanation: `Invariant properties that remain conserved throughout transformation pathways.`,
+          term: 'Operational Framework',
+          explanation: `The primary mechanisms, logical sequences, or contextual relationships detailed in the lesson.`,
           importance: 'high',
         },
       ],
       formulasOrLaws: [
         {
-          name: `${chapterName} Governing Equation`,
-          formula: 'ΔE = Q - W',
-          notes: 'Ensure consistent SI units across all terms before calculation.',
+          name: `${chapterName} Essential Formulation`,
+          formula: 'Core Framework: Foundational Principle → Operational Logic → Systematic Application',
+          notes: 'Review specific definitions and contextual criteria provided in this chapter.',
         },
       ],
       diagramAnalyses: [
         {
-          diagramTitle: `${chapterName} Core Schematic`,
-          observations: 'System boundary separates control volume from ambient reservoirs.',
-          keyTakeaway: 'Work crossing boundary is positive when done by the system.',
+          diagramTitle: `${chapterName} Thematic Structure`,
+          observations: 'Illustrates the relationship between foundational concepts, operational criteria, and real-world outcomes.',
+          keyTakeaway: 'Demonstrates how key principles connect throughout the syllabus.',
         },
       ],
       commonTraps: [
-        'Confusing gauge pressure with absolute pressure.',
-        'Overlooking temperature conversions to Kelvin in rate or thermodynamic laws.',
+        'Confusing distinct categories or applying definitions too broadly without qualifications.',
+        'Overlooking critical limitations or contextual criteria stated in the materials.',
       ],
       examTips: [
-        'Draw and annotate the system diagram before writing down mathematical relations.',
+        'Clearly define core concepts before providing extended explanations.',
+        'Use structured reasoning and refer to specific examples covered in the lesson.',
       ],
-      mnemonics: ['S-I-G-N: System Inputs Gain Net energy.'],
+      mnemonics: ['F-O-C-U-S: Foundational concepts, Operational logic, Context, Underlying reasons, Specific examples.'],
     });
   } catch (error: any) {
     console.error('Error generating notes from content:', error);

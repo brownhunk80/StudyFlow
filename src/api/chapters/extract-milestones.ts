@@ -127,9 +127,9 @@ ${truncatedText}
 Extract the 3 to 6 curriculum milestones matching the sections and headings above.`;
 
   const candidateModels = [
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
     'gemini-3.8-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
   ];
 
   let lastError: any = null;

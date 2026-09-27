@@ -41,6 +41,7 @@ import { PerformanceDiagnosticView } from './PerformanceDiagnosticView';
 import { MilestoneReaderView } from './MilestoneReaderView';
 import { MilestoneCheckpointsRunner } from './MilestoneCheckpointsRunner';
 import { MilestoneRecallDeckRunner } from './MilestoneRecallDeckRunner';
+import { isStaleBoilerplateText } from '../../utils/sectionCheckpointExtractor';
 
 interface TestEnvironmentState {
   chapter: Chapter;
@@ -116,12 +117,8 @@ function initTestEnvironmentState(): TestEnvironmentState {
             const parsed = JSON.parse(savedCPs);
             if (Array.isArray(parsed) && parsed.length > 0) {
               const isStale = parsed.some((cp: any) => {
-                const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''}`;
-                return (
-                  combined.includes('constitutive transfer equation') ||
-                  combined.includes('quasi-static') ||
-                  combined.includes('keeping milliamperes instead of amperes')
-                );
+                const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''} ${JSON.stringify(cp.keyScoringPoints || [])}`;
+                return isStaleBoilerplateText(combined);
               });
 
               if (!isStale) {

@@ -373,8 +373,8 @@ Extract the learning milestones strictly matching the actual sections in the tex
 
     const modelsToTry = [
       'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
     ];
 
     for (const model of modelsToTry) {
@@ -599,56 +599,56 @@ function generateGroundedFallback(
         detailed: `### ${title}\n\n#### Section Overview (${sourcePageRange})\nThis section addresses the direct curriculum requirements for ${chapterName}. Key principles include foundational terminology, qualitative intuition, and specific problem-solving workflows.\n\n#### Critical Formulas & Facts\n- Focus on core parameters defined in ${sourcePageRange}.\n- Check dimensions and signs before substitution.\n- Review edge cases where standard assumptions break down.`,
       },
       coreTopics: [
-        `${title} — Core Law`,
-        `Analytical Derivations`,
-        `Common Student Pitfalls`,
+        `${title} — Core Concept`,
+        `Fundamental Principles`,
+        `Application & Context`,
       ],
       checkLearning: [
         {
-          question: `According to ${sourcePageRange} in "${title}", what is the primary condition required for valid application?`,
+          question: `According to ${sourcePageRange} in "${title}", what is the primary principle established?`,
           options: [
-            'All initial boundary assumptions and conservative constraints must be satisfied',
-            'The system must be non-isolated with infinite dissipation',
-            'Parameters may vary arbitrarily without regard to units',
-            'Only applicable in the high-temperature asymptotic limit',
+            `The foundational definitions, rules, and scope defined in ${title}`,
+            'Arbitrary conventions that can be ignored without impacting validity',
+            'An outdated proposition superseded by irrelevant criteria',
+            'A localized exception with no conceptual significance',
           ],
           correctIndex: 0,
-          explanation: `As detailed in the source text (${sourcePageRange}), strict satisfaction of boundary conditions is mandatory.`,
-          misdirectionBreakdown: 'Options B, C, and D violate foundational physical and mathematical limits stated in the text.',
-          correctAnswer: 'All initial boundary assumptions and conservative constraints must be satisfied',
+          explanation: `As detailed in the source text (${sourcePageRange}), understanding the defining criteria and principles of "${title}" is required for curriculum mastery.`,
+          misdirectionBreakdown: 'Distractor options contradict the foundational meaning and criteria documented in the text.',
+          correctAnswer: `The foundational definitions, rules, and scope defined in ${title}`,
         },
       ],
       recallDeck: [
         {
-          front: `What is the central theorem or concept introduced in ${title}?`,
-          back: `The core governing principle documented on ${sourcePageRange}.`,
+          front: `What is the central concept or principle introduced in ${title}?`,
+          back: `The core curriculum principles and definitions documented in ${sourcePageRange}.`,
           sourceExcerpt: sec.excerpt,
         },
         {
-          front: `State the primary formula or relationship emphasized in ${sourcePageRange}.`,
-          back: `The governing formula linking state variables with defined boundary conditions.`,
+          front: `State the primary relationship or standard emphasized in ${title} (${sourcePageRange}).`,
+          back: `The foundational criteria, mechanisms, and distinctions established in this section.`,
           sourceExcerpt: sec.excerpt,
         },
       ],
       milestoneTitle: title,
       recallCards: [
         {
-          front: `What is the central theorem or concept introduced in ${title}?`,
-          back: `The core governing principle documented on ${sourcePageRange}.`,
+          front: `What is the central concept or principle introduced in ${title}?`,
+          back: `The core curriculum principles and definitions documented in ${sourcePageRange}.`,
         },
       ],
       checkLearningQuestions: [
         {
-          question: `According to ${sourcePageRange} in "${title}", what is the primary condition required for valid application?`,
+          question: `According to ${sourcePageRange} in "${title}", what is the primary principle established?`,
           options: [
-            'All initial boundary assumptions and conservative constraints must be satisfied',
-            'The system must be non-isolated with infinite dissipation',
-            'Parameters may vary arbitrarily without regard to units',
-            'Only applicable in the high-temperature asymptotic limit',
+            `The foundational definitions, rules, and scope defined in ${title}`,
+            'Arbitrary conventions that can be ignored without impacting validity',
+            'An outdated proposition superseded by irrelevant criteria',
+            'A localized exception with no conceptual significance',
           ],
           correctIndex: 0,
-          explanation: `As detailed in the source text (${sourcePageRange}), strict satisfaction of boundary conditions is mandatory.`,
-          correctAnswer: 'All initial boundary assumptions and conservative constraints must be satisfied',
+          explanation: `As detailed in the source text (${sourcePageRange}), understanding the defining criteria and principles of "${title}" is required for curriculum mastery.`,
+          correctAnswer: `The foundational definitions, rules, and scope defined in ${title}`,
         },
       ],
     };

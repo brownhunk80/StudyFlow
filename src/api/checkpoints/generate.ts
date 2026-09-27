@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { z } from 'zod';
 
 // =============================================================
@@ -13,6 +13,7 @@ export const CheckpointItemSchema = z.object({
   benchmarkAnswer: z.string().min(1),
   keyPointsToVerify: z.array(z.string()).min(1),
   sourceCitation: z.string(),
+  trapAnalysis: z.string().optional(),
 });
 
 export type CheckpointItem = z.infer<typeof CheckpointItemSchema>;
@@ -22,6 +23,8 @@ export const GenerateCheckpointsRequestSchema = z.object({
   chapterName: z.string().optional(),
   milestoneTitle: z.string().min(1, 'milestoneTitle is required'),
   milestoneId: z.string().optional(),
+  subjectName: z.string().optional(),
+  subject: z.string().optional(),
   topicTags: z.array(z.string()).optional().default([]),
   coreTopics: z.array(z.string()).optional(),
   sectionTextExcerpt: z.string().optional().default(''),
@@ -38,24 +41,162 @@ export const GenerateCheckpointsResponseSchema = z.object({
 export type GenerateCheckpointsResponse = z.infer<typeof GenerateCheckpointsResponseSchema>;
 
 // =============================================================
-// DETERMINISTIC FALLBACK GENERATOR (OFFLINE / FALLBACK)
+// DETERMINISTIC HUMAN-TEACHER FALLBACK GENERATOR
 // =============================================================
 
+function extractMeaningfulSentences(text: string): string[] {
+  if (!text) return [];
+  return text
+    .replace(/^#+\s+.*$/gm, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/^[•\-\*]\s+/gm, '')
+    .split(/(?<=[.?!])\s+|\n{2,}/)
+    .map((s) => s.replace(/\s+/g, ' ').trim())
+    .filter((s) => s.length > 25 && !s.startsWith('#') && !s.startsWith('>'));
+}
+
+/**
+ * Creates high school curriculum exam questions without templates or robotic placeholders.
+ * Fully subject-aware: Adapts question structure and benchmark answers for Science vs Social Science.
+ */
 function generateDeterministicFallbackCheckpoints(
   chapterTitle: string,
   milestoneTitle: string,
   topicTags: string[],
-  excerpt: string
+  excerpt: string,
+  subjectName?: string
 ): GenerateCheckpointsResponse {
-  const topics = topicTags.length > 0 ? topicTags : [milestoneTitle, 'Core Principles', 'Analytical Application'];
-  const sentences = excerpt
-    .split(/(?<=[.?!])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 30 && !s.startsWith('#'));
+  const sentences = extractMeaningfulSentences(excerpt);
+  const topics = topicTags.length > 0 ? topicTags : [milestoneTitle];
 
-  const citation1 = sentences[0] || `${milestoneTitle} establishes the governing criteria and physical laws for ${chapterTitle}.`;
-  const citation2 = sentences[1] || `${topics[1] || topics[0]} defines the specific constitutive constraints under standard boundary conditions.`;
-  const citation3 = sentences[2] || `Consistent coordinate conventions and sign adherence must be maintained throughout all derivations.`;
+  const primaryTopic = topics[0] || milestoneTitle;
+  const secondaryTopic = topics[1] || topics[0] || 'Core Mechanism';
+  const tertiaryTopic = topics[2] || topics[1] || 'Key Safeguards & Standards';
+
+  const combined = `${subjectName || ''} ${chapterTitle} ${milestoneTitle} ${topics.join(' ')}`.toLowerCase();
+  const isScience =
+    combined.includes('sci') ||
+    combined.includes('physic') ||
+    combined.includes('chem') ||
+    combined.includes('bio') ||
+    combined.includes('light') ||
+    combined.includes('mirror') ||
+    combined.includes('lens') ||
+    combined.includes('refract') ||
+    combined.includes('reflect') ||
+    combined.includes('electric') ||
+    combined.includes('circuit') ||
+    combined.includes('ohm') ||
+    combined.includes('reaction') ||
+    combined.includes('acid') ||
+    combined.includes('base') ||
+    combined.includes('atom') ||
+    combined.includes('cell');
+
+  if (isScience) {
+    // SCIENCE (Physics / Chemistry / Biology)
+    const fact1 = sentences[0] || `${primaryTopic} represents the primary physical or chemical law governing ${chapterTitle}.`;
+    const fact2 = sentences[1] || `${secondaryTopic} defines the operational conditions, formulas, and state relationships in the textbook.`;
+    const fact3 = sentences[2] || `${tertiaryTopic} establishes the experimental conditions and quantitative verification standards.`;
+
+    const q1 = `State the scientific law or definition of "${primaryTopic}" as presented in ${chapterTitle}. What physical or chemical phenomenon does it explain?`;
+    const a1 = `**1. Direct Factual Explanation:**\n${fact1}\n\n**2. Textbook Mechanism & Effect:**\nGoverns the interaction between components, explaining observable changes in states, trajectories, or reaction rates.\n\n**3. Direct Conclusion:**\nForms the necessary foundation for predictive calculations and experimental verification.`;
+    const rub1 = [
+      `States the precise textbook definition or law of "${primaryTopic}"`,
+      'Explains the specific cause-and-effect relationship or physical phenomenon',
+      'Uses standard scientific terminology (no vague or informal descriptions)',
+    ];
+    const trap1 = `Common Pitfall: Confusing everyday terminology with strict scientific definitions or failing to state the exact condition under which the law holds true.`;
+
+    const q2 = `Explain how "${secondaryTopic}" is applied in problem solving or laboratory observations. What formula, Cartesian sign rule, or balanced reaction is required?`;
+    const a2 = `**1. Direct Factual Explanation:**\n${fact2}\n\n**2. Specific Textbook Rule / Example:**\nRequires strict adherence to mathematical relationships, unit conversions (e.g. SI units), and stoichiometric coefficients.\n\n**3. Direct Conclusion:**\nPrevents sign flips, dimensional mismatches, and incorrect quantitative predictions.`;
+    const rub2 = [
+      `Accurately states the governing formula, reaction, or mechanism for "${secondaryTopic}"`,
+      'Applies the correct Cartesian signs, state symbols, or SI unit conversions',
+      'Provides the step-by-step reasoning expected on a board exam sheet',
+    ];
+    const trap2 = `Common Pitfall: Overlooking negative signs in Cartesian conventions or forgetting to balance atoms before computing quantities.`;
+
+    const q3 = `What critical experimental condition, precaution, or limitation does the textbook emphasize for "${tertiaryTopic}"? What happens if this condition is not met?`;
+    const a3 = `**1. Direct Factual Explanation:**\n${fact3}\n\n**2. Specific Textbook Consequence:**\nDeparting from this condition introduces systematic errors, invalidates standard assumptions, or causes anomalous results.\n\n**3. Direct Conclusion:**\nStrict control of experimental variables ensures reproducible, valid scientific outcomes.`;
+    const rub3 = [
+      `Identifies the specific prerequisite, boundary condition, or experimental precaution for "${tertiaryTopic}"`,
+      'Describes the error, distortion, or anomalous observation that occurs when this condition is violated',
+      'Concludes with the verified textbook standard required for full credit',
+    ];
+    const trap3 = `Common Pitfall: Assuming physical/chemical rules apply universally without checking boundary assumptions (e.g., constant temperature for Ohm\'s Law).`;
+
+    return {
+      milestoneTitle,
+      targetModule: 'Module 2: Conceptual Checkpoints',
+      checkpoints: [
+        {
+          id: 'chk_01',
+          checkpointNumber: 1,
+          topicTag: primaryTopic,
+          prompt: q1,
+          benchmarkAnswer: a1,
+          keyPointsToVerify: rub1,
+          sourceCitation: fact1,
+          trapAnalysis: trap1,
+        },
+        {
+          id: 'chk_02',
+          checkpointNumber: 2,
+          topicTag: secondaryTopic,
+          prompt: q2,
+          benchmarkAnswer: a2,
+          keyPointsToVerify: rub2,
+          sourceCitation: fact2,
+          trapAnalysis: trap2,
+        },
+        {
+          id: 'chk_03',
+          checkpointNumber: 3,
+          topicTag: tertiaryTopic,
+          prompt: q3,
+          benchmarkAnswer: a3,
+          keyPointsToVerify: rub3,
+          sourceCitation: fact3,
+          trapAnalysis: trap3,
+        },
+      ],
+    };
+  }
+
+  // SOCIAL SCIENCE (Civics / History / Geography / Economics)
+  const fact1 = sentences[0] || `${primaryTopic} provides the direct legal or institutional framework in ${chapterTitle}.`;
+  const fact2 = sentences[1] || `${secondaryTopic} establishes the operational criteria and governing procedures detailed in the text.`;
+  const fact3 = sentences[2] || `Proper adherence to ${tertiaryTopic} prevents distortion of standards and ensures constitutional safeguards are upheld.`;
+
+  const q1 = `Why is ${primaryTopic.toLowerCase().startsWith('why') ? primaryTopic : `the concept of "${primaryTopic}"`} essential in ${chapterTitle}? Explain what consequences arise when this principle is ignored or absent.`;
+  const a1 = `**1. Direct Factual Explanation:**\n${fact1}\n\n**2. Textbook Consequence:**\nWithout this foundation, representatives or systems operate without accountability, undermining the core standards taught in the chapter.\n\n**3. Direct Conclusion:**\nEnsures authority remains derived from structured consent and periodic verification rather than arbitrary power.`;
+  const rub1 = [
+    `Explicitly identifies "${primaryTopic}" and its primary definition from the lesson`,
+    'Cites the specific consequence or breakdown described in the text when this principle is absent',
+    'Concludes with the fundamental purpose or standard of accountability explained in the material',
+  ];
+  const trap1 = `Common Pitfall: Giving an everyday opinion about ${primaryTopic} instead of stating the specific definition, mechanism, and consequence taught in the book.`;
+
+  const q2 = `How does the textbook distinguish the practical mechanism of "${secondaryTopic}" from related alternatives? Give the specific reasoning or example highlighted in this section.`;
+  const a2 = `**1. Direct Factual Explanation:**\n${fact2}\n\n**2. Specific Textbook Rule or Example:**\nDirectly contrasts the operational steps and demonstrates how procedural safeguards function during actual implementation.\n\n**3. Direct Conclusion:**\nShows that the process is not merely symbolic, but produces distinct, verifiable outcomes defined by curriculum standards.`;
+  const rub2 = [
+    `Accurately explains the operational mechanism of "${secondaryTopic}"`,
+    'Identifies the specific contrast, distinction, or rule provided in the textbook',
+    'References the concrete example or systematic sequence detailed in the section',
+  ];
+  const trap2 = `Common Pitfall: Confusing the official mechanism with informal practices or failing to cite the distinct criteria that separate this from adjacent procedures.`;
+
+  const q3 = `What minimum condition, safeguard, or limitation does the textbook establish for "${tertiaryTopic}"? What happens if this safeguard is violated?`;
+  const a3 = `**1. Direct Factual Explanation:**\n${fact3}\n\n**2. Specific Textbook Consequence:**\nViolating this condition leads to an unequal balance, compromised legitimacy, or systemic failure in governance.\n\n**3. Direct Conclusion:**\nThese safeguards exist specifically to prevent unilateral overreach and guarantee fairness across all participants.`;
+  const rub3 = [
+    `Identifies the specific safeguard, limitation, or prerequisite required for "${tertiaryTopic}"`,
+    'Describes what breakdown or illegitimacy occurs when this safeguard is compromised',
+    'Explains why adhering to this protective standard is required for full compliance',
+  ];
+  const trap3 = `Common Pitfall: Treating the concept as absolute or unconditional without acknowledging the mandatory rules, boundaries, and exceptions outlined in the syllabus.`;
 
   return {
     milestoneTitle,
@@ -64,41 +205,32 @@ function generateDeterministicFallbackCheckpoints(
       {
         id: 'chk_01',
         checkpointNumber: 1,
-        topicTag: topics[0] || milestoneTitle,
-        prompt: `Based strictly on the source text, explain the fundamental relationship and governing criteria underlying "${topics[0] || milestoneTitle}". What assumptions must be satisfied?`,
-        benchmarkAnswer: `According to the source passage: "${citation1}". The governing relationship mandates that all system coordinates and primary variables be evaluated strictly against established boundary conditions and reference criteria.`,
-        keyPointsToVerify: [
-          `Explicit citation or identification of the primary governing principle: "${topics[0] || milestoneTitle}"`,
-          'Accurate description of the required assumptions or initial system constraints',
-          'Clear explanation of the cause-and-effect relationship outlined in the text',
-        ],
-        sourceCitation: citation1,
+        topicTag: primaryTopic,
+        prompt: q1,
+        benchmarkAnswer: a1,
+        keyPointsToVerify: rub1,
+        sourceCitation: fact1,
+        trapAnalysis: trap1,
       },
       {
         id: 'chk_02',
         checkpointNumber: 2,
-        topicTag: topics[1] || topics[0] || milestoneTitle,
-        prompt: `How does the excerpt differentiate or systematically characterize "${topics[1] || topics[0]}"? Trace the underlying mechanism described in the text.`,
-        benchmarkAnswer: `The text highlights that "${citation2}". The mechanism operates through defined constitutive stages, ensuring state continuity and preventing misinterpretation of variables.`,
-        keyPointsToVerify: [
-          `Direct reference to the operational mechanism of "${topics[1] || topics[0]}"`,
-          'Identification of the key distinctions or boundaries identified in the passage',
-          'Correct usage of academic terminology verbatim from the text',
-        ],
-        sourceCitation: citation2,
+        topicTag: secondaryTopic,
+        prompt: q2,
+        benchmarkAnswer: a2,
+        keyPointsToVerify: rub2,
+        sourceCitation: fact2,
+        trapAnalysis: trap2,
       },
       {
         id: 'chk_03',
         checkpointNumber: 3,
-        topicTag: topics[2] || topics[0] || milestoneTitle,
-        prompt: `What critical procedural rule, constraint, or pitfall does the text emphasize regarding "${topics[2] || topics[0]}"? Explain how to properly apply it.`,
-        benchmarkAnswer: `As noted in the text: "${citation3}". Proper application requires strict adherence to defined conventions without premature approximations or sign reversals.`,
-        keyPointsToVerify: [
-          'Identification of the critical rule, boundary constraint, or convention',
-          'Explanation of why adhering to this constraint is required for accuracy',
-          'Synthesis of the proper step-by-step application described in the passage',
-        ],
-        sourceCitation: citation3,
+        topicTag: tertiaryTopic,
+        prompt: q3,
+        benchmarkAnswer: a3,
+        keyPointsToVerify: rub3,
+        sourceCitation: fact3,
+        trapAnalysis: trap3,
       },
     ],
   };
@@ -113,6 +245,7 @@ export async function generateConceptualCheckpoints(
 ): Promise<GenerateCheckpointsResponse> {
   const chapterTitle = (reqBody.chapterTitle || reqBody.chapterName || 'Curriculum Chapter').trim();
   const milestoneTitle = (reqBody.milestoneTitle || '').trim();
+  const subjectName = (reqBody.subjectName || reqBody.subject || '').trim();
   const topicTags = Array.isArray(reqBody.topicTags) && reqBody.topicTags.length > 0
     ? reqBody.topicTags
     : Array.isArray(reqBody.coreTopics) && reqBody.coreTopics.length > 0
@@ -120,7 +253,7 @@ export async function generateConceptualCheckpoints(
       : [milestoneTitle];
   const sectionTextExcerpt = (reqBody.sectionTextExcerpt || '').trim();
 
-  console.log(`[GenerateCheckpoints] Generating Module 2 checkpoints for "${milestoneTitle}" in "${chapterTitle}" (excerpt length: ${sectionTextExcerpt.length})`);
+  console.log(`[GenerateCheckpoints] Generating human-examiner Module 2 checkpoints for "${milestoneTitle}" in "${chapterTitle}" (subject: ${subjectName || 'unspecified'}, excerpt length: ${sectionTextExcerpt.length})`);
 
   const effectiveKey =
     process.env.GEMINI_API_KEY ||
@@ -129,8 +262,8 @@ export async function generateConceptualCheckpoints(
     '';
 
   if (!effectiveKey || !sectionTextExcerpt || sectionTextExcerpt.length < 50) {
-    console.log(`[GenerateCheckpoints] Using deterministic fallback (API key: ${Boolean(effectiveKey)}, excerpt len: ${sectionTextExcerpt.length})`);
-    return generateDeterministicFallbackCheckpoints(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt);
+    console.log(`[GenerateCheckpoints] Using human-teacher fallback (API key: ${Boolean(effectiveKey)}, excerpt len: ${sectionTextExcerpt.length})`);
+    return generateDeterministicFallbackCheckpoints(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, subjectName);
   }
 
   const ai = new GoogleGenAI({
@@ -142,104 +275,129 @@ export async function generateConceptualCheckpoints(
     },
   });
 
-  const systemInstruction = `[SYSTEM DIRECTIVE: RIGOROUS CONCEPT CHECK GENERATOR — REASONING EFFORT: MAXIMUM]
-[EXECUTION MODE: DETERMINISTIC CLOSED-BOOK EXTRACTION — STRICT PASSAGE FIDELITY]
+  const systemInstruction = `[SYSTEM DIRECTIVE: EXPERT HIGH SCHOOL TEACHER & CURRICULUM EXAMINER — CONCEPT CHECK (MODULE 2)]
 
 Role:
-You are an uncompromising academic assessor. Your sole mission is to generate 3 high-quality, open-ended conceptual synthesis checkpoints for "Module 2: Conceptual Checkpoints" (Concept Check) based EXCLUSIVELY on the provided source text excerpt.
+You are an expert high school teacher, senior board examiner, and curriculum author across both SCIENCE (Physics, Chemistry, Biology) and SOCIAL SCIENCE / HUMANITIES (Civics, History, Economics). Your task is to craft 3 natural, rigorous, authentic exam questions and detailed benchmark model answers based EXCLUSIVELY on the provided textbook excerpt.
 
-MANDATORY GENERATION RULES:
-1. STRICT CLOSED-BOOK GROUNDING: Every checkpoint prompt, benchmark answer, and scoring criterion MUST originate 100% from the text between <<<SOURCE_TEXT_START>>> and <<<SOURCE_TEXT_END>>>. If a concept, term, or rule is not explicitly mentioned in this passage, it is STRICTLY FORBIDDEN from appearing in the output.
-2. ZERO DRIFT / NO EXTERNAL DOMAINS: If this passage discusses Civics, Governance, or Elections, you must NEVER produce physics problems, arithmetic calculations, or unrelated topics. If it discusses Optics, you must never introduce Biology.
-3. DEEP CONCEPTUAL SYNTHESIS: Frame questions that test genuine understanding (e.g., asking students to explain "why" or "how", compare systems, or trace cause-and-effect mechanisms explained in the excerpt), rather than trivial recall.
-4. CITATION REQUIREMENT: For every checkpoint, you must extract an exact, unmodified sentence from the passage and place it into "sourceCitation" before formulating the prompt and answer.
-5. BENCHMARK ANSWER: The model answer must be structured, professional, and directly state the essential facts required for full credit.
-6. KEY VERIFICATION POINTS: Provide 3 distinct, concise factual points that must be present in the student's answer to count as understood.`;
+MANDATORY PEDAGOGICAL RULES:
 
-  const userPrompt = `Target Details:
-- Chapter: ${chapterTitle}
-- Milestone: ${milestoneTitle}
-- Target Topic Tags: ${topicTags.join(', ')}
+1. WRITE LIKE A REAL HUMAN TEACHER:
+   - Carefully read the textbook passage.
+   - Formulate natural, thoughtful exam questions directly addressing the specific facts, real-world examples, scientific mechanisms, governing formulas, chemical reactions, constitutional provisions, or practical dilemmas discussed in the text.
+   - NEVER use robotic formulaic templates such as:
+     * "Explain how [Topic] functions according to this section..." (STRICTLY BANNED)
+     * "What specific role does it play, and how does it govern or explain the outcomes discussed?" (STRICTLY BANNED)
+     * "Define [Topic] and explain its role in [Chapter]..." (STRICTLY BANNED)
+   - NEVER inject milestone titles or subtopic titles verbatim into the middle of a repetitive question sentence.
+   - Tailor the question to the academic discipline:
+     * FOR SCIENCE (Physics / Chemistry / Biology):
+       - Ask about physical laws, governing mathematical formulas (e.g. 1/f = 1/v + 1/u, V = IR), Cartesian sign conventions, chemical equations and balancing rules, state symbols, biological mechanisms (e.g. stomatal regulation, transpiration), or laboratory observations (e.g. Activity 10.1 pinhole focus, heating lead nitrate).
+       - e.g., "An object is placed at a distance of 30 cm in front of a concave mirror of focal length 20 cm. Using the mirror formula and Cartesian sign convention, explain where the image will be formed and whether it is real or virtual."
+       - e.g., "State Snell's Law of refraction. When light passes obliquely from air into water of refractive index 1.33, why does it bend towards the normal, and how does its wave speed change?"
+       - e.g., "Write the balanced chemical equation for the reaction of iron with steam. Why is it chemically incorrect to alter subscripts like H₂O to balance atoms?"
+     * FOR SOCIAL SCIENCE / HUMANITIES (Civics / History / Geography / Economics):
+       - Ask about constitutional rules, democratic necessity, electoral systems, historical causes/consequences, or institutional safeguards.
+       - e.g., "Why are regular elections necessary in a representative democracy? Explain what would happen if voters had no mechanism to remove leaders they are dissatisfied with."
+       - e.g., "How do voters participate differently in direct versus indirect elections? Give an example of a representative body elected indirectly as mentioned in the chapter."
 
-<<<SOURCE_TEXT_START>>>
-${sectionTextExcerpt.slice(0, 18000)}
-<<<SOURCE_TEXT_END>>>
+2. BENCHMARK MODEL ANSWERS MUST CONTAIN REAL TEXTBOOK FACTS:
+   - NEVER write vague meta-statements or pedagogical filler like "Articulates key scope", "Establishes the scope within the lesson", or "Clarifies adjacent concepts".
+   - Write the exact factual answer an examiner expects to see on a top student's exam sheet, directly citing textbook facts, formulas, equations, mechanisms, and examples.
+   - Structure every benchmark answer into 3 distinct, numbered factual points:
+     * 1. Direct factual explanation or core definition with exact textbook terms.
+     * 2. Specific textbook consequence, rule, mechanism, formula, or concrete case/example.
+     * 3. Direct analytical conclusion or practical scientific/civic significance.
 
-Generate exactly 3 open-ended conceptual synthesis checkpoints adhering strictly to the system directive.`;
+3. KEY VERIFICATION CRITERIA (CHECKLIST FOR GRADING):
+   - Provide 3 concrete, verifiable keywords, rules, or specific facts that MUST appear in the student's answer for full marks (e.g., in Science: "1. States concave mirror focal length is negative (f = -20 cm); 2. Applies 1/v = 1/f - 1/u correctly; 3. Concludes image is real, inverted, at -60 cm").
+
+4. TRAP ANALYSIS (COMMON STUDENT ERRORS):
+   - For every question, include a concise 'trapAnalysis' identifying the exact mistake students make on exams (e.g. in Science: "Forgetting the negative sign in Cartesian object distance (u is always negative)" or in SST: "Confusing direct universal franchise with indirect legislative representation").
+
+JSON SCHEMA SPECIFICATION:
+Return a valid JSON object matching:
+{
+  "milestoneTitle": "${milestoneTitle}",
+  "targetModule": "Module 2: Conceptual Checkpoints",
+  "checkpoints": [
+    {
+      "id": "chk_01",
+      "checkpointNumber": 1,
+      "topicTag": string,
+      "prompt": string,
+      "benchmarkAnswer": "**1. Direct Factual Explanation:**\\n...\\n\\n**2. Specific Textbook Rule / Example:**\\n...\\n\\n**3. Direct Conclusion:**\\n...",
+      "keyPointsToVerify": [string, string, string],
+      "sourceCitation": string,
+      "trapAnalysis": string
+    },
+    ... (total 3 checkpoints)
+  ]
+}`;
+
+  const userPrompt = `Subject: ${subjectName || 'Curriculum Subject'}
+Chapter: "${chapterTitle}"
+Milestone Title: "${milestoneTitle}"
+Core Topics: ${topicTags.map((t) => `"${t}"`).join(', ')}
+
+Textbook Excerpt:
+---
+${sectionTextExcerpt.slice(0, 14000)}
+---
+
+Generate 3 natural, authentic exam questions and 3-point factual benchmark model answers following all expert teacher guidelines.`;
 
   const candidateModels = [
     'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
   ];
 
   for (const model of candidateModels) {
     let timeoutId: any = null;
     try {
-      console.log(`[GenerateCheckpoints] Querying ${model} for "${milestoneTitle}"`);
+      console.log(`[GenerateCheckpoints] Requesting from ${model} for "${milestoneTitle}"`);
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`Model ${model} request timed out after 25s`)), 25000);
+        timeoutId = setTimeout(() => reject(new Error(`Model ${model} request timed out after 30s`)), 30000);
       });
+
+      const config: any = {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        temperature: 0.15,
+      };
+
+      if (model.includes('3.8')) {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
 
       const apiPromise = ai.models.generateContent({
         model,
         contents: userPrompt,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'OBJECT' as any,
-            properties: {
-              milestoneTitle: { type: 'STRING' as any },
-              targetModule: { type: 'STRING' as any },
-              checkpoints: {
-                type: 'ARRAY' as any,
-                items: {
-                  type: 'OBJECT' as any,
-                  properties: {
-                    id: { type: 'STRING' as any },
-                    checkpointNumber: { type: 'INTEGER' as any },
-                    topicTag: { type: 'STRING' as any },
-                    prompt: { type: 'STRING' as any },
-                    benchmarkAnswer: { type: 'STRING' as any },
-                    keyPointsToVerify: {
-                      type: 'ARRAY' as any,
-                      items: { type: 'STRING' as any },
-                    },
-                    sourceCitation: { type: 'STRING' as any },
-                  },
-                  required: ['id', 'checkpointNumber', 'topicTag', 'prompt', 'benchmarkAnswer', 'keyPointsToVerify', 'sourceCitation'],
-                },
-              },
-            },
-            required: ['milestoneTitle', 'targetModule', 'checkpoints'],
-          },
-          temperature: 0.1,
-        },
+        config,
       });
 
-      const res = await Promise.race([apiPromise, timeoutPromise]);
+      apiPromise.catch(() => {});
+
+      const response = await Promise.race([apiPromise, timeoutPromise]);
       clearTimeout(timeoutId);
 
-      const rawText = (res as any)?.text?.trim();
-      if (!rawText) {
-        console.warn(`[GenerateCheckpoints] Model ${model} returned empty response`);
-        continue;
+      const rawJson = (response.text || '').trim();
+      if (rawJson) {
+        const cleanJson = rawJson.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        const validated = GenerateCheckpointsResponseSchema.safeParse(parsed);
+        if (validated.success) {
+          console.log(`[GenerateCheckpoints] Successfully generated 3 checkpoints with ${model}`);
+          return validated.data;
+        }
       }
-
-      const parsed = JSON.parse(rawText);
-      const validated = GenerateCheckpointsResponseSchema.parse(parsed);
-
-      if (validated.checkpoints.length > 0) {
-        console.log(`[GenerateCheckpoints] Successfully generated ${validated.checkpoints.length} grounded checkpoints with ${model}`);
-        return validated;
-      }
-    } catch (err: any) {
-      if (timeoutId) clearTimeout(timeoutId);
-      console.warn(`[GenerateCheckpoints] Model ${model} failed:`, err?.message || err);
+    } catch (modelErr: any) {
+      clearTimeout(timeoutId);
+      console.warn(`[GenerateCheckpoints] Model ${model} failed:`, modelErr?.message || modelErr);
     }
   }
 
-  console.warn('[GenerateCheckpoints] All AI models failed, using deterministic fallback');
-  return generateDeterministicFallbackCheckpoints(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt);
+  console.warn(`[GenerateCheckpoints] All live Gemini models failed. Using deterministic human-teacher fallback.`);
+  return generateDeterministicFallbackCheckpoints(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, subjectName);
 }

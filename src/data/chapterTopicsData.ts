@@ -376,6 +376,19 @@ export const curatedChapterLibrary: Record<string, ChapterCuratedContent> = {
   },
 };
 
+export function getAuthenticCuratedChapter(chapterName?: string): ChapterCuratedContent | null {
+  if (!chapterName) return null;
+  if (curatedChapterLibrary[chapterName]) {
+    return curatedChapterLibrary[chapterName];
+  }
+  const foundKey = Object.keys(curatedChapterLibrary).find(
+    (k) =>
+      k.toLowerCase().includes(chapterName.toLowerCase()) ||
+      chapterName.toLowerCase().includes(k.toLowerCase())
+  );
+  return foundKey ? curatedChapterLibrary[foundKey] : null;
+}
+
 export function getChapterCuratedContent(chapterName: string, subject: string): ChapterCuratedContent {
   // Exact match
   if (curatedChapterLibrary[chapterName]) {

@@ -232,9 +232,9 @@ Extract exactly ${cardCount} high-yield active-recall flashcards strictly matchi
 
   // Supported flash models with multi-model fallback cascade
   const candidateModels = [
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
     'gemini-3.8-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
   ];
 
   let response: any = null;

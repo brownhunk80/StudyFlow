@@ -196,8 +196,8 @@ Formulate exactly ${questionCount} rigorous validation questions testing underst
     // Candidate models: start with gemini-3.8-flash, with fallback to active flash models
     const candidateModels = [
       'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
     ];
 
     let response: any = null;

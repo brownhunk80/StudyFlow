@@ -33,7 +33,8 @@ import {
 import confetti from 'canvas-confetti';
 import ReactMarkdown from 'react-markdown';
 import { Section, KnowledgeQuestion } from '../../types';
-import { extractSectionCheckpoints, SectionCheckpoint } from '../../utils/sectionCheckpointExtractor';
+import { extractSectionCheckpoints, SectionCheckpoint, isStaleBoilerplateText } from '../../utils/sectionCheckpointExtractor';
+import { SectionBlurtingEvaluator } from './SectionBlurtingEvaluator';
 
 export interface MilestoneCheckpointItem {
   id: string;
@@ -79,14 +80,8 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
         if (Array.isArray(parsed) && parsed.length > 0) {
           // Check for stale generic pseudo-physics boilerplate text
           const isStaleBoilerplate = parsed.some((cp: any) => {
-            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''}`;
-            return (
-              combined.includes('constitutive transfer equation') ||
-              combined.includes('quasi-static') ||
-              combined.includes('restorative flux opposed to dissipation') ||
-              combined.includes('keeping milliamperes instead of amperes') ||
-              combined.includes('Formulate the step-by-step problem-solving heuristic')
-            );
+            const combined = `${cp.prompt || ''} ${cp.benchmarkAnswer || ''} ${JSON.stringify(cp.keyScoringPoints || [])}`;
+            return isStaleBoilerplateText(combined);
           });
 
           if (!isStaleBoilerplate) {
@@ -100,7 +95,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     }
 
     // 2. Extract section-grounded checkpoints strictly for this section
-    const extracted = extractSectionCheckpoints(section);
+    const extracted = extractSectionCheckpoints(section, chapterName, subjectName);
     return extracted.map((cp) => ({
       id: cp.id,
       prompt: cp.prompt,
@@ -114,20 +109,131 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
       selfAssessment: cp.selfAssessment,
       sourceCitation: cp.sourceCitation,
     }));
-  }, [section]);
+  }, [section, chapterName, subjectName]);
 
   const [checkpoints, setCheckpoints] = useState<MilestoneCheckpointItem[]>(initialCheckpoints);
   const [activeIndex, setActiveIndex] = useState(0);
+
+  // Synchronize when section changes
+  useEffect(() => {
+    setCheckpoints(initialCheckpoints);
+    setActiveIndex(0);
+  }, [initialCheckpoints]);
+
+  // Background enhancement: Fetch authentic board-examiner checkpoints from /api/checkpoints/generate if not yet user-answered
+  useEffect(() => {
+    let isCancelled = false;
+    const enhanceCheckpoints = async () => {
+      try {
+        const saved = localStorage.getItem(`milestone_checkpoints_${section.id}`);
+        let parsed: any[] | null = null;
+        if (saved) {
+          try {
+            parsed = JSON.parse(saved);
+          } catch {}
+        }
+
+        // If student has already engaged with these checkpoints, do not overwrite their responses
+        const hasUserProgress = parsed && parsed.some((c: any) => c.userResponse || c.selfAssessment !== null);
+        if (hasUserProgress) {
+          return;
+        }
+
+        const summaryText = typeof section.summary === 'string'
+          ? section.summary
+          : (section.summary as any)?.detailed || '';
+        const excerpt = [
+          section.sectionTextExcerpt,
+          summaryText,
+          Array.isArray(section.summaries) ? section.summaries.map((s) => s.contentMarkdown).join('\n\n') : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+
+        if (excerpt && excerpt.length > 50) {
+          const res = await fetch('/api/checkpoints/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chapterTitle: chapterName,
+              milestoneTitle: section.title,
+              subjectName: subjectName || 'Science',
+              topicTags: section.keyTopics || [section.title],
+              sectionTextExcerpt: excerpt.slice(0, 18000),
+            }),
+          });
+
+          if (res.ok && !isCancelled) {
+            const data = await res.json();
+            if (Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+              const mapped: MilestoneCheckpointItem[] = data.checkpoints.map((cp: any, idx: number) => ({
+                id: cp.id || `cp-${section.id}-${idx + 1}`,
+                prompt: cp.prompt,
+                subtopicTag: cp.topicTag || section.title,
+                benchmarkAnswer: cp.benchmarkAnswer,
+                keyScoringPoints: cp.keyPointsToVerify || [],
+                trapAnalysis: cp.trapAnalysis || `Common Pitfall: Giving everyday impressions instead of textbook definitions and rules.`,
+                userResponse: '',
+                inputMode: 'type' as const,
+                isRevealed: false,
+                selfAssessment: null,
+                sourceCitation: cp.sourceCitation,
+              }));
+
+              setCheckpoints(mapped);
+              try {
+                localStorage.setItem(`milestone_checkpoints_${section.id}`, JSON.stringify(mapped));
+                window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+                window.dispatchEvent(new Event('storage'));
+              } catch {}
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[MilestoneCheckpointsRunner] AI examiner enhancement error:', err);
+      }
+    };
+
+    if (isOpen) {
+      enhanceCheckpoints();
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [section.id, isOpen, chapterName, subjectName]);
+
+  const [stepIndex, setStepIndex] = useState<number>(0); // 0 = Step 0: Warm-up Blurt, 1..N = Checkpoints 1..N
+  const [hasBlurtSaved, setHasBlurtSaved] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`milestone_blurt_${section.id}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setHasBlurtSaved(Boolean(parsed.evaluation));
+      } else {
+        setHasBlurtSaved(false);
+      }
+    } catch {
+      setHasBlurtSaved(false);
+    }
+  }, [section.id, stepIndex, isOpen]);
+
   const [activeInputMode, setActiveInputMode] = useState<'type' | 'speak' | 'paper'>('type');
   const [isCompleted, setIsCompleted] = useState(false);
 
+  const [isRefreshingChecks, setIsRefreshingChecks] = useState(false);
+
   // Allow resetting checkpoints directly to clean section-extracted version
-  const handleResetToCleanSectionCheckpoints = () => {
+  const handleResetToCleanSectionCheckpoints = async () => {
+    setIsRefreshingChecks(true);
     try {
       localStorage.removeItem(`milestone_checkpoints_${section.id}`);
     } catch {}
-    const fresh = extractSectionCheckpoints(section);
-    const mapped = fresh.map((cp) => ({
+
+    const fresh = extractSectionCheckpoints(section, chapterName, subjectName);
+    let mapped = fresh.map((cp) => ({
       id: cp.id,
       prompt: cp.prompt,
       subtopicTag: cp.subtopicTag,
@@ -140,11 +246,64 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
       selfAssessment: null,
       sourceCitation: cp.sourceCitation,
     }));
+
     setCheckpoints(mapped);
     setActiveIndex(0);
-    setIsCompleted(false);
+    try {
+      const summaryText = typeof section.summary === 'string'
+        ? section.summary
+        : (section.summary as any)?.detailed || '';
+      const excerpt = [
+        section.sectionTextExcerpt,
+        summaryText,
+        Array.isArray(section.summaries) ? section.summaries.map((s) => s.contentMarkdown).join('\n\n') : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      if (excerpt && excerpt.length > 60) {
+        const res = await fetch('/api/checkpoints/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chapterTitle: chapterName,
+            milestoneTitle: section.title,
+            subjectName: subjectName || 'Science',
+            topicTags: section.keyTopics || [section.title],
+            sectionTextExcerpt: excerpt.slice(0, 18000),
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+            mapped = data.checkpoints.map((cp: any, idx: number) => ({
+              id: cp.id || `cp-${section.id}-${idx + 1}`,
+              prompt: cp.prompt,
+              subtopicTag: cp.topicTag || section.title,
+              benchmarkAnswer: cp.benchmarkAnswer,
+              keyScoringPoints: cp.keyPointsToVerify || [],
+              trapAnalysis: cp.trapAnalysis || `Common Pitfall: Giving everyday impressions instead of textbook definitions and rules.`,
+              userResponse: '',
+              inputMode: 'type' as const,
+              isRevealed: false,
+              selfAssessment: null,
+              sourceCitation: cp.sourceCitation,
+            }));
+            setCheckpoints(mapped);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[MilestoneCheckpointsRunner] AI examiner query error:', err);
+    } finally {
+      setIsRefreshingChecks(false);
+    }
+
     try {
       localStorage.setItem(`milestone_checkpoints_${section.id}`, JSON.stringify(mapped));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
     } catch {}
     onSaveCheckpoints?.(section.id, mapped, 0);
   };
@@ -182,6 +341,8 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     setCheckpoints(updated);
     try {
       localStorage.setItem(`milestone_checkpoints_${section.id}`, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+      window.dispatchEvent(new Event('storage'));
     } catch {}
     const understoodCount = updated.filter((c) => c.selfAssessment === 'understood').length;
     const scorePct = updated.length > 0 ? Math.round((understoodCount / updated.length) * 100) : 0;
@@ -283,7 +444,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
       // Fallback simulated dictation
       setIsListening(true);
       setTimeout(() => {
-        const sampleDictation = `First, we establish standard boundary conditions. Under ideal equilibrium, the net conserved quantity is invariant, which avoids the common sign error.`;
+        const sampleDictation = `Regarding ${currentCP.subtopicTag || section.title}, the primary principle established in this section centers on the defined criteria and mechanisms explained in the syllabus.`;
         handleUpdateResponse(
           currentCP.userResponse ? `${currentCP.userResponse}\n${sampleDictation}` : sampleDictation
         );
@@ -359,7 +520,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-4xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
         {/* ================================================================= */}
-        {/* TOP HEADER: CONCEPT CHECK & PROGRESS (SINGLE COMPACT ROW) */}
+        {/* TOP HEADER: CONCEPT CHECK & PROGRESS */}
         {/* ================================================================= */}
         <div className="p-3.5 sm:p-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/70 dark:bg-slate-900/90 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -390,7 +551,9 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
 
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-xs font-extrabold text-slate-400 hidden sm:inline">
-              Checkpoint {activeIndex + 1} of {checkpoints.length}
+              {stepIndex === 0
+                ? 'Step 0: Warm-up Blurt'
+                : `Checkpoint ${stepIndex} of ${checkpoints.length}`}
             </span>
 
             <button
@@ -403,11 +566,36 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
           </div>
         </div>
 
-        {/* Stepper bar across top */}
-        <div className="px-5 py-2.5 bg-slate-100/60 dark:bg-slate-800/40 border-b border-slate-200/70 dark:border-slate-800/80 flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+        {/* ================================================================= */}
+        {/* STEPPER BAR: STEP 0 (RECALL BLURT) FOLLOWED BY CHECKPOINTS 1..N */}
+        {/* ================================================================= */}
+        <div className="px-5 py-2.5 bg-slate-100/60 dark:bg-slate-800/40 border-b border-slate-200/70 dark:border-slate-800/80 flex items-center justify-between gap-3 shrink-0 overflow-x-auto">
+          <div className="flex items-center gap-2 py-0.5 shrink-0">
+            {/* Step 0: Warm-up Active Recall Blurt */}
+            <button
+              type="button"
+              onClick={() => {
+                setStepIndex(0);
+                setIsCompleted(false);
+              }}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 border ${
+                stepIndex === 0
+                  ? 'bg-amber-500 text-white border-amber-600 shadow-2xs'
+                  : hasBlurtSaved
+                  ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-amber-500'}`} />
+              <span>Step 0: Recall Blurt</span>
+              {hasBlurtSaved && (
+                <CheckCircle2 className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-emerald-500'}`} />
+              )}
+            </button>
+
+            {/* Checkpoints 1..N */}
             {checkpoints.map((cp, idx) => {
-              const isCurrent = idx === activeIndex;
+              const isCurrent = stepIndex === idx + 1;
               const isUnderstood = cp.selfAssessment === 'understood';
               const isNeedsWork = cp.selfAssessment === 'needs_work';
 
@@ -416,6 +604,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                   key={cp.id}
                   type="button"
                   onClick={() => {
+                    setStepIndex(idx + 1);
                     setActiveIndex(idx);
                     setIsCompleted(false);
                   }}
@@ -448,20 +637,42 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             </div>
             <button
               type="button"
+              disabled={isRefreshingChecks}
               onClick={handleResetToCleanSectionCheckpoints}
               title="Refresh and reload clean questions strictly for this section"
-              className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800"
+              className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 disabled:opacity-50"
             >
-              <RotateCcw className="w-3 h-3" />
-              <span className="hidden sm:inline">Reload Section Checks</span>
+              {isRefreshingChecks ? (
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
+              ) : (
+                <RotateCcw className="w-3 h-3" />
+              )}
+              <span className="hidden sm:inline">{isRefreshingChecks ? 'Regenerating...' : 'Reload Section Checks'}</span>
             </button>
           </div>
         </div>
 
         {/* ================================================================= */}
-        {/* MAIN BODY: PROMPT + MULTIMODAL INPUT + BENCHMARK REVEAL */}
+        {/* RENDER ACTIVE STEP */}
         {/* ================================================================= */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+        {stepIndex === 0 ? (
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            <SectionBlurtingEvaluator
+              section={section}
+              chapterName={chapterName}
+              subjectName={subjectName}
+              onClose={onClose}
+              onProceedToCheckpoint={() => {
+                setStepIndex(1);
+                setActiveIndex(0);
+              }}
+              onProceedToRecallDeck={onProceedToRecallDeck}
+            />
+          </div>
+        ) : (
+          <>
+            {/* MAIN BODY: PROMPT + MULTIMODAL INPUT + BENCHMARK REVEAL */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           {/* A. If session completed screen */}
           {isCompleted ? (
             <div className="max-w-2xl mx-auto py-8 text-center space-y-6 animate-in zoom-in-95 duration-200">
@@ -637,7 +848,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
                       rows={5}
                       value={currentCP.userResponse || ''}
                       onChange={(e) => handleUpdateResponse(e.target.value)}
-                      placeholder="Articulate the core derivation, statement of law, boundary conditions, or reasoning here in your own words..."
+                      placeholder="Articulate your conceptual explanation, core reasoning, key definitions, or arguments here in your own words..."
                       className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-2xs font-sans resize-y"
                     />
 
@@ -883,24 +1094,32 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             <button
               type="button"
               onClick={() => {
-                if (activeIndex > 0) setActiveIndex((prev) => prev - 1);
+                if (stepIndex === 1) {
+                  setStepIndex(0);
+                } else if (stepIndex > 1) {
+                  setStepIndex(stepIndex - 1);
+                  setActiveIndex((prev) => Math.max(0, prev - 1));
+                }
               }}
-              disabled={activeIndex === 0}
-              className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold disabled:opacity-40 transition cursor-pointer flex items-center gap-1"
+              className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition cursor-pointer flex items-center gap-1 hover:bg-slate-50 dark:hover:bg-slate-700"
             >
               <ChevronLeft className="w-4 h-4" />
-              <span>Previous</span>
+              <span>{stepIndex === 1 ? 'Step 0: Recall Blurt' : 'Previous'}</span>
             </button>
 
             <button
               type="button"
               onClick={() => {
-                if (activeIndex < checkpoints.length - 1) setActiveIndex((prev) => prev + 1);
+                if (activeIndex < checkpoints.length - 1) {
+                  setStepIndex(stepIndex + 1);
+                  setActiveIndex((prev) => prev + 1);
+                } else {
+                  setIsCompleted(true);
+                }
               }}
-              disabled={activeIndex === checkpoints.length - 1}
-              className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold disabled:opacity-40 transition cursor-pointer flex items-center gap-1"
+              className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition cursor-pointer flex items-center gap-1 hover:bg-slate-50 dark:hover:bg-slate-700"
             >
-              <span>Next</span>
+              <span>{activeIndex === checkpoints.length - 1 ? 'Finish Concept Check' : 'Next'}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -929,8 +1148,10 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </>
+    )}
+  </div>
+</div>
   );
 };
 
