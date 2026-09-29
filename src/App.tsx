@@ -57,7 +57,9 @@ import { fetchExtractChapterTopics } from './utils/aiClient';
 import {
   extractLearnTabDecksAndCards,
   syncReviewedCardToLearnStorage,
+  isInvalidSubject,
 } from './utils/learnDeckSync';
+import { interleaveCards, enrichCardsWithContext } from './utils/interleaveCards';
 import { safeSetItem } from './utils/storageUtils';
 
 const CURRENT_STORAGE_VERSION = 'studyflow_fresh_student_v5_dynamic_milestones';
@@ -235,8 +237,29 @@ export default function App() {
 
   // Dynamically extract and synchronize all recall decks & flashcards from the "Learn" tab chapters & sections
   const { learnDecks, learnCards } = useMemo(() => {
-    return extractLearnTabDecksAndCards(exams);
-  }, [exams, activeTab, syncNonce]);
+    return extractLearnTabDecksAndCards(exams, subjects);
+  }, [exams, subjects, activeTab, syncNonce]);
+
+  // Helper to resolve a valid subject name for custom cards or decks
+  const resolveItemSubject = (subj?: string, chap?: string): string => {
+    if (subj && !isInvalidSubject(subj)) return subj.trim();
+    if (chap) {
+      for (const ex of exams) {
+        const match = ex.chapters?.find(
+          (c) => c.name.toLowerCase() === chap.toLowerCase()
+        );
+        if (match) {
+          if (match.subject && !isInvalidSubject(match.subject)) return match.subject;
+          if (ex.name && !isInvalidSubject(ex.name)) return ex.name;
+        }
+      }
+    }
+    const defaultSubj =
+      subjects.find((s) => !isInvalidSubject(s.name))?.name ||
+      exams.find((e) => !isInvalidSubject(e.name))?.name ||
+      'Science';
+    return defaultSubj;
+  };
 
   // Combined Decks: Learn tab curriculum decks (prioritized) + Custom created decks
   const combinedDecks = useMemo(() => {
@@ -247,7 +270,10 @@ export default function App() {
     learnDecks.forEach((ld) => {
       if (!seenIds.has(ld.id)) {
         seenIds.add(ld.id);
-        merged.push(ld);
+        merged.push({
+          ...ld,
+          subject: resolveItemSubject(ld.subject),
+        });
       }
     });
 
@@ -255,12 +281,15 @@ export default function App() {
     decks.forEach((d) => {
       if (!seenIds.has(d.id)) {
         seenIds.add(d.id);
-        merged.push(d);
+        merged.push({
+          ...d,
+          subject: resolveItemSubject(d.subject),
+        });
       }
     });
 
     return merged;
-  }, [decks, learnDecks]);
+  }, [decks, learnDecks, subjects, exams]);
 
   // Combined Flashcards: Learn tab curriculum cards + Custom created cards
   const combinedFlashcards = useMemo(() => {
@@ -270,19 +299,25 @@ export default function App() {
     learnCards.forEach((lc) => {
       if (!seenIds.has(lc.id)) {
         seenIds.add(lc.id);
-        merged.push(lc);
+        merged.push({
+          ...lc,
+          subject: resolveItemSubject(lc.subject, lc.chapter),
+        });
       }
     });
 
     flashcards.forEach((c) => {
       if (!seenIds.has(c.id)) {
         seenIds.add(c.id);
-        merged.push(c);
+        merged.push({
+          ...c,
+          subject: resolveItemSubject(c.subject, c.chapter),
+        });
       }
     });
 
     return merged;
-  }, [flashcards, learnCards]);
+  }, [flashcards, learnCards, subjects, exams]);
 
   // Daily Metrics
   const [todayFocusMinutes, setTodayFocusMinutes] = useState<number>(0);
@@ -305,10 +340,12 @@ export default function App() {
     isOpen: boolean;
     cards: Flashcard[];
     deckTitle: string;
+    isInterleaved?: boolean;
   }>({
     isOpen: false,
     cards: [],
     deckTitle: '',
+    isInterleaved: false,
   });
 
   const [isAddCardOpen, setIsAddCardOpen] = useState<boolean>(false);
@@ -413,9 +450,16 @@ export default function App() {
     setIsAuthenticated(false);
   };
 
-  // Handler: Start Focus Task
+  // Handler: Start Focus Task (Routes recall tasks directly to interleaved recall session)
   const handleStartFocusTask = (task?: TaskItem) => {
     if (task) {
+      if (task.activityType === 'RECALL' || task.type === 'Recall' || task.title.toLowerCase().startsWith('recall')) {
+        handleStartRecallSession(
+          undefined,
+          task.subject && task.subject !== 'General' ? task.subject : undefined
+        );
+        return;
+      }
       setActiveFocusTask(task);
     } else {
       setActiveFocusTask(null);
@@ -831,6 +875,32 @@ export default function App() {
         return next;
       });
     }
+
+    // Keep activeFolderSubject updated with newly added chapter
+    setActiveFolderSubject((prev) => {
+      if (!prev) return null;
+      const isMatch =
+        (targetExam && prev.exam?.id === targetExam.id) ||
+        prev.subject.id === examIdOrSubject ||
+        prev.subject.name.toLowerCase() === examIdOrSubject.toLowerCase() ||
+        (targetExam && prev.subject.name.toLowerCase() === targetExam.name.toLowerCase());
+      if (isMatch) {
+        return {
+          ...prev,
+          exam: {
+            ...(prev.exam || targetExam || {}),
+            id: activeExamId || prev.exam?.id || 'exam-' + Date.now(),
+            name: prev.subject.name,
+            examDate: prev.exam?.examDate || new Date().toISOString().split('T')[0],
+            daysLeft: prev.exam?.daysLeft ?? 30,
+            chapters: [...(prev.exam?.chapters || []), newChap],
+          } as Exam,
+        };
+      }
+      return prev;
+    });
+
+    setToastMessage(`Chapter "${newChap.name}" added successfully.`);
   };
 
   const handleUpdateChapterSections = (
@@ -1129,8 +1199,12 @@ export default function App() {
       return prev;
     });
 
-    // Bidirectional sync: sync SM-2 review parameters back to Learn Tab storage
-    syncReviewedCardToLearnStorage(cardId, updatedParams, rating);
+    // Bidirectional sync: sync SM-2 review parameters back to Learn Tab storage with context
+    syncReviewedCardToLearnStorage(cardId, updatedParams, rating, {
+      chapterId: (existingCard as any).chapterId,
+      milestoneId: (existingCard as any).milestoneTitle || (existingCard as any).sectionId,
+      sectionId: (existingCard as any).sectionId,
+    });
 
     // Award student XP for active recall effort
     setUser((prev) => ({
@@ -1139,31 +1213,53 @@ export default function App() {
     }));
   };
 
-  const handleStartRecallSession = (deckId?: string, subject?: string) => {
+  const handleStartRecallSession = (
+    deckId?: string,
+    subject?: string,
+    forceAll?: boolean,
+    singleCardId?: string
+  ) => {
     let targetCards: Flashcard[] = [];
-    let title = 'All Due Cards';
+    let title = "Today's Recall";
+    let isInterleaved = false;
 
-    if (deckId) {
+    if (singleCardId) {
+      const card = combinedFlashcards.find((c) => c.id === singleCardId);
+      if (card) {
+        targetCards = [card];
+        title = `Card Drill: ${card.chapter || card.subject}`;
+        isInterleaved = false;
+      }
+    } else if (deckId) {
       const deck = combinedDecks.find((d) => d.id === deckId);
       title = deck ? (deck.title || (deck as unknown as { name?: string }).name || 'Deck Practice') : 'Deck Practice';
       targetCards = combinedFlashcards.filter((c) => c.deckId === deckId);
-    } else if (subject) {
-      title = `${subject} Practice`;
-      targetCards = combinedFlashcards.filter((c) => c.subject.toLowerCase() === subject.toLowerCase());
-      if (targetCards.length === 0) {
-        targetCards = combinedFlashcards;
-      }
+      isInterleaved = false;
+    } else if (subject && subject !== 'all') {
+      title = `${subject} Recall`;
+      const subjectCards = combinedFlashcards.filter(
+        (c) => c.subject.toLowerCase().trim() === subject.toLowerCase().trim()
+      );
+      const pool = forceAll ? subjectCards : subjectCards.filter(isCardDue);
+      const resolvedPool = pool.length > 0 ? pool : subjectCards;
+      const enriched = enrichCardsWithContext(resolvedPool, exams, subjects);
+      targetCards = interleaveCards(enriched);
+      isInterleaved = true;
     } else {
-      targetCards = combinedFlashcards.filter(isCardDue);
-      if (targetCards.length === 0) {
-        targetCards = combinedFlashcards;
-      }
+      // Primary multi-subject & multi-chapter recall session
+      const due = combinedFlashcards.filter(isCardDue);
+      const pool = due.length > 0 && !forceAll ? due : combinedFlashcards;
+      title = due.length > 0 && !forceAll ? `Today's Recall (${due.length} Due)` : 'All Flashcards Recall';
+      const enriched = enrichCardsWithContext(pool, exams, subjects);
+      targetCards = interleaveCards(enriched);
+      isInterleaved = true;
     }
 
     setActiveRecallSession({
       isOpen: true,
       cards: targetCards,
       deckTitle: title,
+      isInterleaved,
     });
   };
 
@@ -1343,21 +1439,21 @@ export default function App() {
               subjectName={activeFolderSubject.subject.name}
               subjectColor={activeFolderSubject.subject.color}
               exam={
-                activeFolderSubject.exam ||
                 exams.find(
                   (e) =>
+                    (activeFolderSubject.exam && e.id === activeFolderSubject.exam.id) ||
                     e.name.toLowerCase() ===
-                    activeFolderSubject.subject.name.toLowerCase()
-                )
+                      activeFolderSubject.subject.name.toLowerCase()
+                ) || activeFolderSubject.exam
               }
               chapters={
                 (
-                  activeFolderSubject.exam ||
                   exams.find(
                     (e) =>
+                      (activeFolderSubject.exam && e.id === activeFolderSubject.exam.id) ||
                       e.name.toLowerCase() ===
-                      activeFolderSubject.subject.name.toLowerCase()
-                  )
+                        activeFolderSubject.subject.name.toLowerCase()
+                  ) || activeFolderSubject.exam
                 )?.chapters || []
               }
               decks={combinedDecks}
@@ -1526,7 +1622,9 @@ export default function App() {
               onOpenExamPrep={(examId) =>
                 setExamPrepExamId(examId || exams[0]?.id)
               }
-              onStartRecallSession={(deckId, subject) => handleStartRecallSession(deckId, subject)}
+              onStartRecallSession={(deckId, subject, forceAll, singleCardId) =>
+                handleStartRecallSession(deckId, subject, forceAll, singleCardId)
+              }
               onNavigateToRecall={() => setActiveTab('recall')}
               onNavigateToPlan={() => setActiveTab('plan')}
               onOpenGuide={() => setIsGuideModalOpen(true)}
@@ -1860,6 +1958,7 @@ export default function App() {
         isOpen={activeRecallSession.isOpen}
         cards={activeRecallSession.cards || []}
         deckTitle={activeRecallSession.deckTitle || 'Practice Session'}
+        isInterleaved={activeRecallSession.isInterleaved}
         onClose={() => setActiveRecallSession((prev) => ({ ...prev, isOpen: false }))}
         onCardReviewed={(cardId, updated, rating) => handleRateCard(cardId, rating, updated)}
         onRateCard={handleRateCard}

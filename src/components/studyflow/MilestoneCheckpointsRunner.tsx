@@ -29,12 +29,18 @@ import {
   PenTool,
   Eraser,
   Volume2,
+  Calculator,
+  BookOpen,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import ReactMarkdown from 'react-markdown';
-import { Section, KnowledgeQuestion } from '../../types';
+import { Section, KnowledgeQuestion, WorkedExampleFadingPayload, WorkedExampleStep } from '../../types';
 import { extractSectionCheckpoints, SectionCheckpoint, isStaleBoilerplateText } from '../../utils/sectionCheckpointExtractor';
 import { SectionBlurtingEvaluator } from './SectionBlurtingEvaluator';
+import { isHindiSubject } from '../../utils/hindiDetection';
+import { isScienceOrMathSubject } from '../../api/checkpoints/generate';
+
+import { WorkedExampleFadingView } from './WorkedExampleFadingView';
 
 export interface MilestoneCheckpointItem {
   id: string;
@@ -70,6 +76,109 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
   onProceedToRecallDeck,
   onSaveCheckpoints,
 }) => {
+  const isHindi = isHindiSubject(subjectName, chapterName, section.title);
+  const isScienceOrMath = isScienceOrMathSubject(subjectName, chapterName, section.title);
+  const resolvedSubject = isHindi ? 'Hindi' : (subjectName && subjectName !== 'Science' ? subjectName : 'General');
+
+  // Worked Example Fading State for Science & Math
+  const [workedExampleFading, setWorkedExampleFading] = useState<WorkedExampleFadingPayload | null>(() => {
+    try {
+      const savedFading = localStorage.getItem(`milestone_worked_example_fading_${section.id}`);
+      if (savedFading) {
+        return JSON.parse(savedFading);
+      }
+    } catch {}
+    return null;
+  });
+
+  const [activeEngineMode, setActiveEngineMode] = useState<'worked_example_fading' | 'standard_checkpoints'>(
+    'standard_checkpoints'
+  );
+
+  const resolvedFadingData: WorkedExampleFadingPayload = useMemo(() => {
+    if (workedExampleFading) return workedExampleFading;
+    return {
+      mode: 'worked_example_fading',
+      topicTag: section.title,
+      subjectType: isScienceOrMath ? 'Science' : 'Maths',
+      workedExample: {
+        problemStatement: `Derive the fundamental physical formula and solve for standard parameters in "${section.title}" (${chapterName}).`,
+        givenData: [
+          { symbol: 'u', value: '-30 cm', meaning: 'Object Distance (in front of mirror/lens)' },
+          { symbol: 'f', value: '-20 cm', meaning: 'Focal length (Cartesian convention)' },
+        ],
+        governingFormulaOrLaw: 'Mirror Formula: 1/f = 1/v + 1/u and Magnification: m = -v/u',
+        steps: [
+          {
+            stepNumber: 1,
+            label: 'Cartesian Convention Setup',
+            expressionOrAction: 'u = -30 cm, f = -20 cm',
+            rationale: 'All distances opposite incident light are negative in New Cartesian Sign Convention.',
+          },
+          {
+            stepNumber: 2,
+            label: 'Formula Substitution & Algebraic Transposition',
+            expressionOrAction: '1/v = 1/f - 1/u = 1/(-20) - 1/(-30) = -1/20 + 1/30 = -1/60 ⇒ v = -60 cm',
+            rationale: 'Isolate 1/v, calculate common denominator (60), and take reciprocal.',
+          },
+          {
+            stepNumber: 3,
+            label: 'Magnification & Image Nature',
+            expressionOrAction: 'm = -v/u = -(-60)/(-30) = -2 (Real & Inverted, 2x Magnified)',
+            rationale: 'Negative magnification confirms real and inverted image.',
+          },
+        ],
+        finalAnswer: 'Image distance v = -60 cm, Nature: Real & Inverted, Magnification m = -2',
+        teacherKeyTip: 'Always verify Cartesian sign conventions. Distances in front of mirror are negative. Do not drop minus signs when subtracting negatives.',
+      },
+      fadedScaffold: {
+        problemStatement: `An isomorphic problem: An object is placed at distance u = -15 cm with focal length f = -10 cm. Complete the intermediate calculation to determine image distance v.`,
+        givenData: [
+          { symbol: 'u', value: '-15 cm', meaning: 'Object distance' },
+          { symbol: 'f', value: '-10 cm', meaning: 'Focal length' },
+        ],
+        governingFormulaOrLaw: '1/v = 1/f - 1/u',
+        steps: [
+          {
+            stepNumber: 1,
+            label: 'Cartesian Coordinate Setup',
+            expressionOrAction: 'u = -15 cm, f = -10 cm',
+            rationale: 'Assign known Cartesian coordinate values.',
+          },
+          {
+            stepNumber: 2,
+            label: 'Intermediate Derivation Step',
+            expressionOrAction: '1/v = 1/(-10) - 1/(-15) = -1/10 + 1/15 = -1/30 ⇒ v = [BLANK]',
+            rationale: 'Take reciprocal of common denominator fraction.',
+            isFaded: true,
+            fadedPlaceholder: 'e.g., -30 cm or v = -30',
+            fadedExpectedAnswer: '-30',
+            fadedAlternativeAnswers: ['-30 cm', 'v = -30', '-30', 'v = -30 cm', '-30cm'],
+          },
+          {
+            stepNumber: 3,
+            label: 'Magnification State',
+            expressionOrAction: 'm = -v/u = -(-30)/(-15) = -2 (Real & Inverted)',
+            rationale: 'Interpret image characteristics from calculated values.',
+          },
+        ],
+        finalAnswer: 'v = -30 cm (Real, Inverted, Magnified)',
+        fadedStepHint: 'Hint: 1/(-10) - 1/(-15) = -1/10 + 1/15 = (-3 + 2)/30 = -1/30. Take reciprocal to get v.',
+      },
+      independentProblem: {
+        id: `ind-${section.id}`,
+        prompt: `A concave mirror produces a real image of size 3 times that of an object placed at 20 cm in front of it. Calculate the focal length of the mirror with full Cartesian sign conventions.`,
+        benchmarkAnswer: `**1. Given Data & Sign Conventions:**\nu = -20 cm. Since image is real, m = -3 (m = -v/u ⇒ -3 = -v/(-20) ⇒ v = -60 cm).\n\n**2. Mirror Formula Derivation:**\n1/f = 1/v + 1/u = 1/(-60) + 1/(-20) = (-1 - 3)/60 = -4/60 = -1/15.\nTaking reciprocal: f = -15 cm.\n\n**3. Conclusion:**\nThe focal length of the concave mirror is 15 cm (f = -15 cm, negative sign confirms concave nature).`,
+        keyPointsToVerify: [
+          'Sets magnification m = -3 for a real inverted image',
+          'Computes image distance v = -60 cm correctly',
+          'Calculates focal length f = -15 cm with negative sign and SI unit',
+        ],
+        trapAnalysis: 'Common Pitfall: Taking magnification as +3 instead of -3. Remember: Real images always have negative magnification in mirror optics.',
+      },
+    };
+  }, [workedExampleFading, isScienceOrMath, section.id, section.title, chapterName]);
+
   // Generate initial checkpoints based strictly on that section's content
   const initialCheckpoints: MilestoneCheckpointItem[] = useMemo(() => {
     // 1. If saved checkpoints in localStorage, verify they are not the old generic boilerplate template
@@ -95,7 +204,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     }
 
     // 2. Extract section-grounded checkpoints strictly for this section
-    const extracted = extractSectionCheckpoints(section, chapterName, subjectName);
+    const extracted = extractSectionCheckpoints(section, chapterName, resolvedSubject);
     return extracted.map((cp) => ({
       id: cp.id,
       prompt: cp.prompt,
@@ -109,7 +218,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
       selfAssessment: cp.selfAssessment,
       sourceCitation: cp.sourceCitation,
     }));
-  }, [section, chapterName, subjectName]);
+  }, [section, chapterName, resolvedSubject]);
 
   const [checkpoints, setCheckpoints] = useState<MilestoneCheckpointItem[]>(initialCheckpoints);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -118,9 +227,16 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
   useEffect(() => {
     setCheckpoints(initialCheckpoints);
     setActiveIndex(0);
-  }, [initialCheckpoints]);
+    try {
+      const savedFading = localStorage.getItem(`milestone_worked_example_fading_${section.id}`);
+      if (savedFading) {
+        setWorkedExampleFading(JSON.parse(savedFading));
+      }
+    } catch {}
+    setActiveEngineMode('standard_checkpoints');
+  }, [initialCheckpoints, isScienceOrMath, section.id]);
 
-  // Background enhancement: Fetch authentic board-examiner checkpoints from /api/checkpoints/generate if not yet user-answered
+  // Background enhancement: Fetch authentic board-examiner checkpoints & worked example fading from /api/checkpoints/generate if not yet user-answered
   useEffect(() => {
     let isCancelled = false;
     const enhanceCheckpoints = async () => {
@@ -131,12 +247,6 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
           try {
             parsed = JSON.parse(saved);
           } catch {}
-        }
-
-        // If student has already engaged with these checkpoints, do not overwrite their responses
-        const hasUserProgress = parsed && parsed.some((c: any) => c.userResponse || c.selfAssessment !== null);
-        if (hasUserProgress) {
-          return;
         }
 
         const summaryText = typeof section.summary === 'string'
@@ -157,7 +267,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
             body: JSON.stringify({
               chapterTitle: chapterName,
               milestoneTitle: section.title,
-              subjectName: subjectName || 'Science',
+              subjectName: resolvedSubject,
               topicTags: section.keyTopics || [section.title],
               sectionTextExcerpt: excerpt.slice(0, 18000),
             }),
@@ -165,7 +275,16 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
 
           if (res.ok && !isCancelled) {
             const data = await res.json();
-            if (Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
+            if (data.workedExampleFading) {
+              setWorkedExampleFading(data.workedExampleFading);
+              try {
+                localStorage.setItem(`milestone_worked_example_fading_${section.id}`, JSON.stringify(data.workedExampleFading));
+              } catch {}
+            }
+
+            // If student has already engaged with standard checkpoints, do not overwrite their responses
+            const hasUserProgress = parsed && parsed.some((c: any) => c.userResponse || c.selfAssessment !== null);
+            if (!hasUserProgress && Array.isArray(data.checkpoints) && data.checkpoints.length > 0) {
               const mapped: MilestoneCheckpointItem[] = data.checkpoints.map((cp: any, idx: number) => ({
                 id: cp.id || `cp-${section.id}-${idx + 1}`,
                 prompt: cp.prompt,
@@ -201,7 +320,8 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
     return () => {
       isCancelled = true;
     };
-  }, [section.id, isOpen, chapterName, subjectName]);
+  }, [section.id, isOpen, chapterName, subjectName, resolvedSubject]);
+
 
   const [stepIndex, setStepIndex] = useState<number>(0); // 0 = Step 0: Warm-up Blurt, 1..N = Checkpoints 1..N
   const [hasBlurtSaved, setHasBlurtSaved] = useState<boolean>(false);
@@ -268,7 +388,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
           body: JSON.stringify({
             chapterTitle: chapterName,
             milestoneTitle: section.title,
-            subjectName: subjectName || 'Science',
+            subjectName: resolvedSubject,
             topicTags: section.keyTopics || [section.title],
             sectionTextExcerpt: excerpt.slice(0, 18000),
           }),
@@ -550,9 +670,42 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {isScienceOrMath && (
+              <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-700/80 p-0.5 rounded-xl mr-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveEngineMode('worked_example_fading')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                    activeEngineMode === 'worked_example_fading'
+                      ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-cyan-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  <Calculator className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Worked Example Fading</span>
+                  <span className="sm:hidden">Fading</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveEngineMode('standard_checkpoints')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                    activeEngineMode === 'standard_checkpoints'
+                      ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-cyan-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                  }`}
+                >
+                  <Target className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Rubric Checkpoints</span>
+                  <span className="sm:hidden">Rubric</span>
+                </button>
+              </div>
+            )}
+
             <span className="text-xs font-extrabold text-slate-400 hidden sm:inline">
               {stepIndex === 0
                 ? 'Step 0: Warm-up Blurt'
+                : activeEngineMode === 'worked_example_fading'
+                ? 'Worked Example Fading'
                 : `Checkpoint ${stepIndex} of ${checkpoints.length}`}
             </span>
 
@@ -569,93 +722,110 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
         {/* ================================================================= */}
         {/* STEPPER BAR: STEP 0 (RECALL BLURT) FOLLOWED BY CHECKPOINTS 1..N */}
         {/* ================================================================= */}
-        <div className="px-5 py-2.5 bg-slate-100/60 dark:bg-slate-800/40 border-b border-slate-200/70 dark:border-slate-800/80 flex items-center justify-between gap-3 shrink-0 overflow-x-auto">
-          <div className="flex items-center gap-2 py-0.5 shrink-0">
-            {/* Step 0: Warm-up Active Recall Blurt */}
-            <button
-              type="button"
-              onClick={() => {
-                setStepIndex(0);
-                setIsCompleted(false);
-              }}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 border ${
-                stepIndex === 0
-                  ? 'bg-amber-500 text-white border-amber-600 shadow-2xs'
-                  : hasBlurtSaved
-                  ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-              }`}
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-amber-500'}`} />
-              <span>Step 0: Recall Blurt</span>
-              {hasBlurtSaved && (
-                <CheckCircle2 className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-emerald-500'}`} />
-              )}
-            </button>
+        {activeEngineMode !== 'worked_example_fading' && (
+          <div className="px-5 py-2.5 bg-slate-100/60 dark:bg-slate-800/40 border-b border-slate-200/70 dark:border-slate-800/80 flex items-center justify-between gap-3 shrink-0 overflow-x-auto">
+            <div className="flex items-center gap-2 py-0.5 shrink-0">
+              {/* Step 0: Warm-up Active Recall Blurt */}
+              <button
+                type="button"
+                onClick={() => {
+                  setStepIndex(0);
+                  setIsCompleted(false);
+                }}
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 border ${
+                  stepIndex === 0
+                    ? 'bg-amber-500 text-white border-amber-600 shadow-2xs'
+                    : hasBlurtSaved
+                    ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-amber-500'}`} />
+                <span>Step 0: Recall Blurt</span>
+                {hasBlurtSaved && (
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${stepIndex === 0 ? 'text-white' : 'text-emerald-500'}`} />
+                )}
+              </button>
 
-            {/* Checkpoints 1..N */}
-            {checkpoints.map((cp, idx) => {
-              const isCurrent = stepIndex === idx + 1;
-              const isUnderstood = cp.selfAssessment === 'understood';
-              const isNeedsWork = cp.selfAssessment === 'needs_work';
+              {/* Checkpoints 1..N */}
+              {checkpoints.map((cp, idx) => {
+                const isCurrent = stepIndex === idx + 1;
+                const isUnderstood = cp.selfAssessment === 'understood';
+                const isNeedsWork = cp.selfAssessment === 'needs_work';
 
-              return (
-                <button
-                  key={cp.id}
-                  type="button"
-                  onClick={() => {
-                    setStepIndex(idx + 1);
-                    setActiveIndex(idx);
-                    setIsCompleted(false);
-                  }}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 border ${
-                    isCurrent
-                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                      : isUnderstood
-                      ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-                      : isNeedsWork
-                      ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  {isUnderstood ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                  ) : isNeedsWork ? (
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                  ) : (
-                    <span>{idx + 1}</span>
-                  )}
-                  <span>Checkpoint {idx + 1}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="text-xs font-bold text-slate-500">
-              Contributes <span className="text-emerald-600 font-extrabold">{stats.milestoneContribution}%</span> of 40%
+                return (
+                  <button
+                    key={cp.id}
+                    type="button"
+                    onClick={() => {
+                      setStepIndex(idx + 1);
+                      setActiveIndex(idx);
+                      setIsCompleted(false);
+                    }}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 border ${
+                      isCurrent
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                        : isUnderstood
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                        : isNeedsWork
+                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {isUnderstood ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    ) : isNeedsWork ? (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                    ) : (
+                      <span>{idx + 1}</span>
+                    )}
+                    <span>Checkpoint {idx + 1}</span>
+                  </button>
+                );
+              })}
             </div>
-            <button
-              type="button"
-              disabled={isRefreshingChecks}
-              onClick={handleResetToCleanSectionCheckpoints}
-              title="Refresh and reload clean questions strictly for this section"
-              className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 disabled:opacity-50"
-            >
-              {isRefreshingChecks ? (
-                <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
-              ) : (
-                <RotateCcw className="w-3 h-3" />
-              )}
-              <span className="hidden sm:inline">{isRefreshingChecks ? 'Regenerating...' : 'Reload Section Checks'}</span>
-            </button>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-xs font-bold text-slate-500">
+                Contributes <span className="text-emerald-600 font-extrabold">{stats.milestoneContribution}%</span> of 40%
+              </div>
+              <button
+                type="button"
+                disabled={isRefreshingChecks}
+                onClick={handleResetToCleanSectionCheckpoints}
+                title="Refresh and reload clean questions strictly for this section"
+                className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 disabled:opacity-50"
+              >
+                {isRefreshingChecks ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
+                ) : (
+                  <RotateCcw className="w-3 h-3" />
+                )}
+                <span className="hidden sm:inline">{isRefreshingChecks ? 'Regenerating...' : 'Reload Section Checks'}</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ================================================================= */}
         {/* RENDER ACTIVE STEP */}
         {/* ================================================================= */}
-        {stepIndex === 0 ? (
+        {activeEngineMode === 'worked_example_fading' ? (
+          <WorkedExampleFadingView
+            section={section}
+            chapterName={chapterName}
+            subjectName={subjectName}
+            fadingData={resolvedFadingData}
+            onProceedToRecallDeck={onProceedToRecallDeck}
+            onClose={onClose}
+            onSaveProgress={(fading) => {
+              try {
+                localStorage.setItem(`milestone_worked_example_fading_${section.id}`, JSON.stringify(fading));
+                window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
+              } catch {}
+            }}
+          />
+        ) : stepIndex === 0 ? (
           <div className="flex-1 overflow-y-auto p-4 sm:p-6">
             <SectionBlurtingEvaluator
               section={section}
@@ -673,6 +843,7 @@ export const MilestoneCheckpointsRunner: React.FC<MilestoneCheckpointsRunnerProp
           <>
             {/* MAIN BODY: PROMPT + MULTIMODAL INPUT + BENCHMARK REVEAL */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+
           {/* A. If session completed screen */}
           {isCompleted ? (
             <div className="max-w-2xl mx-auto py-8 text-center space-y-6 animate-in zoom-in-95 duration-200">

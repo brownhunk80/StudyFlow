@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for adding the Blurting Active Recall & Section Understanding Evaluator into Concept Check. Includes rich text blurting with voice dictation, server-side Gemini evaluation against section content, and detailed feedback breakdown (mastered points, missed concepts, misconceptions, coverage score, and targeted revision prompts).",
-  "updatedAt":  "2026-09-27T18:24:14.148005794Z",
+  "summary":  "Fix Active Recall Missing Questions & Refine Math Problem Recognition\n\n- Robust Question Prompt Resolution: Support all question field variants (front, frontPrompt, promptQuestion, problemStatement, prompt, question) with intelligent fallback so questions never render blank in Today's Recall session.\n- Precision Math Mode: Restrict mathematical calculation input and toolbar strictly to cards with cardType 'math_problem' or explicit numerical computation prompts, preventing standard conceptual cards from being hijacked by number pads.\n- Synchronizer Normalization: Update learnDeckSync to ensure all section cards synced into Today's Recall carry valid non-empty front and back strings.\n- Concept Check Stability: Ensure Concept Check defaults to standard syllabus rubric checkpoints rather than forcing worked-example fading.",
+  "updatedAt":  "2026-09-29T08:43:40.405135966Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

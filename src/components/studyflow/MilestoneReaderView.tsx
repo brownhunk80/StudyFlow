@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Section, SummaryMode } from '../../types';
+import { isHindiSubject } from '../../utils/hindiDetection';
 
 export interface MilestoneReaderViewProps {
   section: Section;
@@ -87,10 +88,30 @@ export const MilestoneReaderView: React.FC<MilestoneReaderViewProps> = ({
     }
   };
 
+  const isHindi = isHindiSubject(subjectName, chapterName, `${section.title} ${chapterRawText || ''}`);
+
   // Resolve compact overview content
   const compactContent = useMemo(() => {
     const existing = section.summaries?.find((s) => s.mode === 'compact')?.contentMarkdown;
     if (existing && existing.trim().length > 0) return existing;
+
+    if (isHindi) {
+      const keyTopicsList =
+        section.keyTopics && section.keyTopics.length > 0
+          ? section.keyTopics.map((kt) => `- **${kt}**: मुख्य साहित्यिक व वैचारिक बिंदु तथा व्याख्या।`).join('\n')
+          : `- **केंद्रीय भाव**: पाठ '${chapterName}' का मूल संदेश व प्रतिपाद्य।\n- **महत्वपूर्ण प्रसंग**: कथावस्तु तथा व्याकरणिक बिंदु।`;
+
+      return `### 💡 मुख्य सारांश एवं परीक्षा बिंदु: ${section.title}
+
+${keyTopicsList}
+
+---
+
+#### 📌 महत्वपूर्ण स्मरणीय तथ्य
+- **प्रतिपाद्य एवं मूल संदेश**: पाठ '${chapterName}' का यह भाग मानवीय संवेदना, आदर्श जीवन-मूल्यों और सामाजिक यथार्थ को रेखांकित करता है।
+- **शब्दार्थ एवं भाषा सौंदर्य**: मानक खड़ी बोली, उपयुक्त तत्सम-तद्भव शब्द, लोकोक्तियाँ व मुहावरों का प्रयोग।
+- **बोर्ड परीक्षा टिप**: परीक्षा में संदर्भ-सहित व्याख्या करते समय प्रसंग, भावार्थ और विशेष (शिल्प-सौंदर्य) तीनों भागों को अलग-अलग स्पष्ट लिखें।`;
+    }
 
     const keyTopicsList =
       section.keyTopics && section.keyTopics.length > 0
@@ -107,12 +128,37 @@ ${keyTopicsList}
 - **Governing Equations**: Standard textbook formulations apply with strict SI units.
 - **Boundary Assumptions**: Verify isothermal/closed system criteria prior to numerical calculations.
 - **Key Exam Strategy**: Always sketch reference axes and write symbolic formulation before arithmetic calculation.`;
-  }, [section]);
+  }, [section, isHindi, chapterName]);
 
   // Resolve detailed deep-dive content
   const detailedContent = useMemo(() => {
     const existing = section.summaries?.find((s) => s.mode === 'detailed')?.contentMarkdown;
     if (existing && existing.trim().length > 0) return existing;
+
+    if (isHindi) {
+      return `## गहन पाठ्य अध्ययन एवं व्याख्या: ${section.title}
+
+### 1. पाठ परिचय एवं केंद्रीय भाव
+पाठ **'${chapterName}'** के अंतर्गत **'${section.title}'** अत्यंत महत्वपूर्ण वैचारिक एवं साहित्यिक सोपान है। सीबीएसई/एनसीईआरटी बोर्ड परीक्षा में उत्कृष्ट अंक अर्जित करने हेतु केवल कथावस्तु जानना पर्याप्त नहीं है, बल्कि रचनाकार के मूल भाव, संदेश और मानवीय मूल्यों का सूक्ष्म विश्लेषण आवश्यक है।
+
+### 2. मुख्य व्याख्या, भावार्थ एवं प्रसंग
+- **कथानक / काव्यांश का सरल अर्थ**: प्रस्तुत अंश में लेखक/कवि ने प्रसंगानुकूल परिस्थितियों, पात्रों की मानसिक स्थिति और सामाजिक परिवेश का यथार्थपरक चित्रण किया है।
+- **जीवन मूल्य एवं प्रेरणा**: यह प्रसंग विद्यार्थियों को कर्तव्यनिष्ठा, नैतिक साहस, मानवीय संवेदना और राष्ट्रीय चेतना को आत्मसात करने की प्रेरणा देता है।
+- **व्याकरण एवं शिल्पगत विशेषताएं**:
+  1. भाषा शैली: सहज, प्रभावपूर्ण एवं मानक देवनागरी हिन्दी।
+  2. अलंकार एवं शब्द शक्ति: प्रसंगानुसार उपमा, रूपक, अनुप्रास तथा लक्षणा/व्यंजना का सुंदर समावेश।
+  3. शब्दार्थ चयन: तत्सम शब्दों के साथ व्यावहारिक देशज व मुहावरेदार भाषा।
+
+### 3. बोर्ड परीक्षा में सामान्य गलतियाँ (सावधानियाँ)
+- ⚠️ **सामान्य भूल**: संदर्भ और प्रसंग लिखे बिना सीधे व्याख्या शुरू कर देना। सदैव पहले कवि/लेखक व पाठ का नाम लिखें।
+- ⚠️ **शब्द सीमा का उल्लंघन**: 2 अंक के प्रश्नों में अनावश्यक लंबा उत्तर लिखना या 5 अंक के प्रश्न में बिंदुवार व्याख्या न करना।
+- ⚠️ **अशुद्ध वर्तनी**: देवनागरी मात्राओं (ह्रस्व/दीर्घ) तथा विराम चिह्नों का ध्यान न रखना।
+
+### 4. स्व-मूल्यांकन चेकलिस्ट
+- [x] क्या आपको इस खंड का मुख्य संदेश व प्रतिपाद्य स्पष्ट है?
+- [x] क्या कठिन शब्दों के अर्थ एवं मुहावरे याद हैं?
+- [x] क्या आप संदर्भ-सहित भावार्थ अपने शब्दों में लिख सकते हैं?`;
+    }
 
     return `## Comprehensive Theoretical Deep-Dive: ${section.title}
 
@@ -137,7 +183,7 @@ In the study of **${chapterName}**, ${section.title} represents a critical conce
 - [x] State the core theorem in your own words.
 - [x] Write out the primary formula from memory.
 - [x] Identify standard reference frame assumptions.`;
-  }, [section, chapterName]);
+  }, [section, chapterName, isHindi]);
 
   // Resolve source document text
   const sourceContent = useMemo(() => {

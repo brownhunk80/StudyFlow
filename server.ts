@@ -27,6 +27,7 @@ import {
   evaluateVoiceAnswer,
   VoiceRecallEvaluationRequestSchema,
 } from './src/api/recall/evaluate-voice-answer';
+import { isHindiSubject, getHindiPromptDirectives } from './src/utils/hindiDetection';
 
 const app = express();
 const PORT = 3000;
@@ -89,8 +90,8 @@ async function generateGeminiContent(
   const models = [
     preferred,
     'gemini-3.8-flash',
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
   ];
   const uniqueModels = Array.from(new Set(models)).filter((m) => m !== 'gemini-2.5-flash');
 
@@ -301,6 +302,7 @@ app.post('/api/check-learning/generate', async (req, res) => {
       topicTags,
       sectionTextExcerpt,
       questionCount,
+      subjectName: rawBody.subjectName || rawBody.subject || '',
     });
 
     if (!validationResult.success) {
@@ -329,6 +331,7 @@ app.post('/api/check-learning/generate', async (req, res) => {
           topicTags: validationResult.data.topicTags,
           sectionTextExcerpt: trimmedExcerpt,
           questionCount: validationResult.data.questionCount,
+          subjectName: validationResult.data.subjectName,
         },
         process.env.GEMINI_API_KEY
       );
@@ -339,6 +342,7 @@ app.post('/api/check-learning/generate', async (req, res) => {
         topicTags: validationResult.data.topicTags,
         sectionTextExcerpt: trimmedExcerpt,
         questionCount: validationResult.data.questionCount,
+        subjectName: validationResult.data.subjectName,
       });
     }
 
@@ -494,7 +498,11 @@ app.post('/api/recall-deck/generate', async (req, res) => {
   try {
     const rawBody = req.body || {};
 
-    const validationResult = RecallDeckGenerateRequestSchema.safeParse(rawBody);
+    const subjectName = rawBody.subjectName || rawBody.subject || '';
+    const validationResult = RecallDeckGenerateRequestSchema.safeParse({
+      ...rawBody,
+      subjectName,
+    });
     if (!validationResult.success) {
       return res.status(400).json({
         error: 'VALIDATION_ERROR',
@@ -528,6 +536,7 @@ app.post('/api/recall-deck/generate', async (req, res) => {
         topicTags,
         sectionTextExcerpt: trimmedExcerpt,
         cardCount,
+        subjectName: validationResult.data.subjectName || subjectName,
       },
       apiKey
     );
@@ -558,9 +567,14 @@ app.post('/api/ai/chapter-notes', async (req, res) => {
       return res.status(400).json({ error: 'chapterName is required' });
     }
 
+    const isHindi = isHindiSubject(subject, chapterName);
+    const hindiDirective = isHindi
+      ? `\n${getHindiPromptDirectives(chapterName)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST write summary, keyConcepts, formulasOrLaws, commonTraps, examTips, and mnemonics strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+      : '';
+
     const ai = getAI();
     if (ai) {
-      const prompt = `You are an elite academic tutor. Generate structured, high-yield revision study notes for the chapter: "${chapterName}" in the subject "${subject || 'General'}" (Exam: ${examName || 'Upcoming Finals'}).
+      const prompt = `You are an elite academic tutor. Generate structured, high-yield revision study notes for the chapter: "${chapterName}" in the subject "${subject || 'General'}" (Exam: ${examName || 'Upcoming Finals'}).${hindiDirective}
 Return pure JSON with no markdown wrapping:
 {
   "summary": "3-4 concise sentences summarizing the chapter's core objective and significance",
@@ -608,6 +622,48 @@ Return pure JSON with no markdown wrapping:
       } catch (aiErr: any) {
         console.warn(`[ChapterNotes] API unavailable (${formatErrorNote(aiErr)}), using curriculum fallback`);
       }
+    }
+
+    if (isHindi) {
+      return res.json({
+        summary: `'${chapterName}' हिन्दी पाठ्यक्रम (CBSE/NCERT) का अत्यंत महत्वपूर्ण अध्याय है। इसमें निहित केंद्रीय भाव, साहित्यिक सौंदर्य, पात्रों के चारित्रिक गुण एवं परीक्षा-उपयोगी तथ्यों को समझना उच्च अंक अर्जित करने हेतु अनिवार्य है।`,
+        keyConcepts: [
+          {
+            term: 'पाठ का केंद्रीय भाव एवं मुख्य संदेश',
+            explanation: `लेखक/कवि द्वारा प्रस्तुत सामाजिक, नैतिक अथवा मानवीय संदेश जो पाठ का मूल आधार है।`,
+            importance: 'critical',
+          },
+          {
+            term: 'कठिन शब्दार्थ एवं संदर्भ व्याख्या',
+            explanation: `पाठ में प्रयुक्त तत्सम, तद्भव व देशज शब्दों के मानक अर्थ जो संदर्भ-सहित व्याख्या में सहायक हैं।`,
+            importance: 'high',
+          },
+          {
+            term: 'शिल्प-सौंदर्य एवं भाषा-शैली',
+            explanation: `उपयुक्त भाषा, अलंकारों, मुहावरों और रस का सुसंगत प्रयोग जो रचना को प्रभावोत्पादक बनाता है।`,
+            importance: 'medium',
+          },
+        ],
+        formulasOrLaws: [
+          {
+            name: `${chapterName} — संदर्भ एवं प्रतिपाद्य सूत्र`,
+            formula: 'पाठ परिचय + प्रसंग व्याख्या + केंद्रीय संदेश = संपूर्ण परीक्षा उत्तर',
+            notes: 'बोर्ड परीक्षा में संदर्भ-सहित व्याख्या लिखते समय लेखक/कवि का नाम व पाठ का शीर्षक अवश्य लिखें।',
+          },
+        ],
+        commonTraps: [
+          'केवल अपनी सामान्य भाषा में कहानी लिखना, जबकि बोर्ड परीक्षा में मानक साहित्यिक शब्दावली अपेक्षित होती है।',
+          'कठिन शब्दों और प्रतीकार्थ को नजरअंदाज करना।',
+          'व्याकरणिक अशुद्धियाँ और वर्तनी (Spelling) की गलतियाँ करना।',
+        ],
+        examTips: [
+          'प्रश्नों के उत्तर बिंदुवार लिखें और महत्वपूर्ण पंक्तियों या सूक्तियों को रेखांकित करें।',
+          'काव्यांश/गद्यांश आधारित प्रश्नों में सीधे पाठ्यांश से प्रमाण प्रस्तुत करें।',
+        ],
+        mnemonics: [
+          'स-प्र-व्या-वि: संदर्भ, प्रसंग, व्याख्या, विशेष — व्याख्या का अचूक प्रारूप',
+        ],
+      });
     }
 
     // High quality fallback if key not configured
@@ -664,9 +720,14 @@ app.post('/api/ai/generate-flashcards', async (req, res) => {
     const { chapterName, subject, count = 5, customTopic } = req.body;
     const topic = customTopic || chapterName || 'General Science';
 
+    const isHindi = isHindiSubject(subject, chapterName, topic);
+    const hindiDirective = isHindi
+      ? `\n${getHindiPromptDirectives(chapterName)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST write front, back, clozeHint, and chapter strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+      : '';
+
     const ai = getAI();
     if (ai) {
-      const prompt = `You are an expert in spaced repetition flashcard design (Anki / SuperMemo SM-2 standards).
+      const prompt = `You are an expert in spaced repetition flashcard design (Anki / SuperMemo SM-2 standards).${hindiDirective}
 Generate ${count} high-yield, atomic active recall flashcards for "${topic}" in "${subject || 'General'}".
 Cards must follow the Minimum Information Principle: prompt clearly on front, direct precise answer with explanation on back.
 Return pure JSON with no markdown wrapping:
@@ -697,6 +758,43 @@ Return pure JSON with no markdown wrapping:
       } catch (aiErr: any) {
         console.warn(`[Flashcards] API unavailable (${formatErrorNote(aiErr)}), using curriculum fallback`);
       }
+    }
+
+    if (isHindi) {
+      return res.json({
+        cards: [
+          {
+            front: `पाठ '${chapterName || topic}' का मुख्य प्रतिपाद्य अथवा केंद्रीय भाव क्या है?`,
+            back: `पाठ के माध्यम से लेखक/कवि नैतिक मूल्यों, मानवीय संवेदनाओं और सामाजिक चेतना का संदेश देते हैं।`,
+            clozeHint: 'केंद्रीय भाव एवं संदेश',
+            chapter: chapterName || topic,
+          },
+          {
+            front: `'${topic}' के संदर्भ में प्रयुक्त महत्वपूर्ण शब्दों एवं प्रसंगों का क्या महत्व है?`,
+            back: `यह घटनाक्रम को गति प्रदान करते हैं तथा पात्रों के आंतरिक मनोभावों और भाषा-शिल्प को उजागर करते हैं।`,
+            clozeHint: 'शब्दार्थ व प्रसंग',
+            chapter: chapterName || topic,
+          },
+          {
+            front: `बोर्ड परीक्षा में '${topic}' से संबंधित प्रश्नों के उत्तर लिखते समय किन मुख्य बिंदुओं का ध्यान रखना चाहिए?`,
+            back: `संदर्भ और कवि/लेखक का नाम, सटीक मानक हिन्दी शब्दावली, तथा बिंदुवार तर्कसंगत प्रस्तुति।`,
+            clozeHint: 'परीक्षा उत्तर लेखन',
+            chapter: chapterName || topic,
+          },
+          {
+            front: `'${topic}' में भाषा-शैली अथवा व्याकरणिक विशेषता क्या है?`,
+            back: `सरल, सुबोध भाषा के साथ उपयुक्त तत्सम-तद्भव शब्दों, मुहावरों और अलंकारों का सटीक प्रयोग।`,
+            clozeHint: 'शिल्प-सौंदर्य व व्याकरण',
+            chapter: chapterName || topic,
+          },
+          {
+            front: `'${topic}' से संबंधित सामान्यतः विद्यार्थी कौन-सी भूल करते हैं?`,
+            back: `पाठ के मूल संदेश को छोड़कर केवल सतही सारांश लिखना और वर्तनी संबंधी अशुद्धियाँ करना।`,
+            clozeHint: 'सामान्य भूल एवं समाधान',
+            chapter: chapterName || topic,
+          },
+        ],
+      });
     }
 
     // High quality fallback
@@ -882,6 +980,57 @@ async function getOrExtractTopicsHelper(
     ];
   }
 
+  const isHindi = isHindiSubject(subject, chapterName);
+  if (isHindi) {
+    if (aiInstance) {
+      try {
+        const prompt = `Identify 3 to 6 major curriculum topics/milestones for CBSE/NCERT Hindi Chapter: "${chapterName}".
+${getHindiPromptDirectives(chapterName)}
+CRITICAL: All titles and summaries MUST be written strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी).
+Return pure JSON with no markdown wrapping:
+{"topics": [{"id": "topic-1", "title": "देवनागरी शीर्षक", "summary": "1 वाक्य का संक्षिप्त सारांश", "keyFormula": "महत्वपूर्ण व्याकरणिक या साहित्यिक सूत्र"}]}`;
+        const resp = await generateGeminiContent(aiInstance, {
+          contents: prompt,
+          config: { responseMimeType: 'application/json', temperature: 0.2 },
+        });
+        const parsed = JSON.parse(resp.text || '{}');
+        if (Array.isArray(parsed.topics) && parsed.topics.length > 0) {
+          return parsed.topics.map((t: any, idx: number) => ({
+            id: t.id || `topic-${idx + 1}`,
+            title: t.title || `सोपान ${idx + 1}`,
+            summary: t.summary || '',
+            keyFormula: t.keyFormula,
+          }));
+        }
+      } catch (e) {
+        console.warn(`[TopicExtraction] Unavailable (${formatErrorNote(e)}), using Hindi curriculum fallback`);
+      }
+    }
+
+    return [
+      {
+        id: 'topic-hin-1',
+        title: `${chapterName}: पाठ परिचय एवं केंद्रीय भाव`,
+        summary: `लेखक/कवि का जीवन परिचय, रचना की पृष्ठभूमि तथा पाठ का मूल संदेश एवं प्रतिपाद्य।`,
+      },
+      {
+        id: 'topic-hin-2',
+        title: `${chapterName}: मुख्य व्याख्या एवं प्रसंग भावार्थ`,
+        summary: `काव्यांश अथवा गद्यांश का सरल भावार्थ, अंतर्कथाएं तथा पात्रों का मनोविश्लेषण।`,
+      },
+      {
+        id: 'topic-hin-3',
+        title: `${chapterName}: शब्दार्थ, मुहावरे एवं भाषा-शिल्प`,
+        summary: `कठिन शब्दों के अर्थ, व्याकरणिक बिंदु (अलंकार, समास, पद-परिचय) एवं शिल्प-सौंदर्य।`,
+      },
+      {
+        id: 'topic-hin-4',
+        title: `${chapterName}: महत्वपूर्ण परीक्षा प्रश्न-उत्तर एवं विचार-बिंदु`,
+        summary: `सीबीएसई बोर्ड परीक्षा के अनुसार लघु व दीर्घ उत्तरीय प्रश्न तथा मूल्यपरक विश्लेषण।`,
+      },
+    ];
+  }
+
   // If AI available and chapter is something else, extract topics via AI
   if (aiInstance) {
     try {
@@ -983,8 +1132,13 @@ app.post('/api/ai/chapter-test', async (req, res) => {
         normChap.includes('work') ||
         normChap.includes('energy'));
 
+    const isHindi = isHindiSubject(subject, chapterName, topicTitle);
+    const hindiDirective = isHindi
+      ? `\n${getHindiPromptDirectives(chapterName)}\n- CRITICAL MANDATORY INSTRUCTION: The subject is Hindi. All questions, options, correctAnswer, explanation, and conceptTested MUST be written strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+      : '';
+
     if (ai) {
-      const prompt = `You are an exam question designer. Generate ${questionCount} questions testing ONLY this specific topic — not the whole chapter:
+      const prompt = `You are an exam question designer. Generate ${questionCount} questions testing ONLY this specific topic — not the whole chapter:${hindiDirective}
 
 Topic: "${topicTitle}"
 Chapter: "${chapterName || 'General'}" (context only, do not test other topics in it)
@@ -1064,6 +1218,83 @@ Return pure JSON with no markdown wrapping:
     // High quality, subject-aware fallback anchored to topic
     const chosenTopic = { id: topicId || 'topic-1', title: topicTitle, keyFormula: topicKeyFormula, keyPoints: keyPointsArray };
     const topicNorm = chosenTopic.title.toLowerCase();
+
+    if (isHindi) {
+      return res.json({
+        questions: [
+          {
+            id: `q-hin-1-${Date.now()}`,
+            topicId: chosenTopic.id,
+            topicTitle: chosenTopic.title,
+            type: 'mcq',
+            questionType: 'recall',
+            skill: 'साहित्यिक एवं वैचारिक बोध',
+            sourcePattern: 'सीबीएसई बोर्ड परीक्षा प्रारूप (गद्यांश/काव्यांश आधारित)',
+            question: `पाठ '${chapterName || 'हिन्दी'}' के संदर्भ में '${chosenTopic.title}' का मुख्य प्रतिपाद्य एवं केंद्रीय भाव क्या है?`,
+            options: [
+              `यह पाठ का मूल संदेश स्पष्ट करता है तथा मानवीय मूल्यों व आदर्श आचरण को रेखांकित करता है।`,
+              `यह केवल एक काल्पनिक प्रसंग है जिसका जीवन मूल्यों से कोई संबंध नहीं है।`,
+              `यह पात्रों के नकारात्मक आचरण का समर्थन करता है।`,
+              `यह कथावस्तु के मूल उद्देश्य के विपरीत निष्कर्ष प्रस्तुत करता है।`,
+            ],
+            correctAnswer: `यह पाठ का मूल संदेश स्पष्ट करता है तथा मानवीय मूल्यों व आदर्श आचरण को रेखांकित करता है।`,
+            explanation: `विकल्प (क) पूर्णतः सही है क्योंकि '${chosenTopic.title}' के माध्यम से लेखक/कवि ने जीवन के यथार्थ, मानवीय संवेदना और सामाजिक चेतना को उजागर किया है।`,
+            conceptTested: 'केंद्रीय भाव एवं पाठ का प्रतिपाद्य',
+          },
+          {
+            id: `q-hin-2-${Date.now()}`,
+            topicId: chosenTopic.id,
+            topicTitle: chosenTopic.title,
+            type: 'mcq',
+            questionType: 'reasoning',
+            skill: 'भावार्थ एवं चरित्र-विश्लेषण',
+            sourcePattern: 'सीबीएसई लघु-उत्तरीय प्रश्न शैली',
+            question: `'${chosenTopic.title}' के प्रसंग में पात्रों की मानसिक स्थिति अथवा सामाजिक परिवेश का सबसे सटीक विश्लेषण क्या है?`,
+            options: [
+              `पात्र अपने नैतिक दायित्व, त्याग और आत्मसम्मान के प्रति जागरूक हैं।`,
+              `पात्र सामाजिक परिस्थितियों से पूरी तरह उदासीन और लापरवाह हैं।`,
+              `घटनाक्रम में कोई तार्किक संबंध या भावनात्मक गहराई नहीं है।`,
+              `सभी पात्र केवल व्यक्तिगत स्वार्थ से प्रेरित होकर कार्य करते हैं।`,
+            ],
+            correctAnswer: `पात्र अपने नैतिक दायित्व, त्याग और आत्मसम्मान के प्रति जागरूक हैं।`,
+            explanation: `प्रस्तुत अंश में पात्रों के आंतरिक द्वंद्व, कर्तव्यपरायणता और आदर्श मूल्यों का यथार्थवादी चित्रण मिलता है।`,
+            conceptTested: 'चरित्र-चित्रण एवं प्रसंग विश्लेषण',
+          },
+          {
+            id: `q-hin-3-${Date.now()}`,
+            topicId: chosenTopic.id,
+            topicTitle: chosenTopic.title,
+            type: 'mcq',
+            questionType: 'application',
+            skill: 'शिल्प-सौंदर्य एवं भाषा-ज्ञान',
+            sourcePattern: 'सीबीएसई व्याकरण एवं काव्य-सौंदर्य प्रश्न',
+            question: `'${chosenTopic.title}' में प्रयुक्त भाषा-शैली अथवा व्याकरणिक विशेषता के संबंध में कौन-सा कथन सत्य है?`,
+            options: [
+              `मानक खड़ी बोली हिन्दी के साथ भावपूर्ण मुहावरों और उपयुक्त अलंकारों का सहज समन्वय है।`,
+              `केवल क्लिष्ट और अप्रचलित विदेशी शब्दों का प्रयोग किया गया है।`,
+              `व्याकरण के नियमों और मात्राओं की सर्वथा उपेक्षा की गई है।`,
+              `रचना में किसी भी प्रकार के रस या अलंकार का समावेश नहीं है।`,
+            ],
+            correctAnswer: `मानक खड़ी बोली हिन्दी के साथ भावपूर्ण मुहावरों और उपयुक्त अलंकारों का सहज समन्वय है।`,
+            explanation: `रचनाकार ने अभिव्यक्ति को सजीव व प्रभावशाली बनाने हेतु भाषा-शिल्प, तत्सम-तद्भव शब्दों और अलंकारों का सटीक विधान किया है।`,
+            conceptTested: 'भाषा-शिल्प, रस एवं व्याकरण',
+          },
+          {
+            id: `q-hin-4-${Date.now()}`,
+            topicId: chosenTopic.id,
+            topicTitle: chosenTopic.title,
+            type: 'short_answer',
+            questionType: 'reasoning',
+            skill: 'आशय स्पष्टीकरण एवं बोर्ड परीक्षा दृष्टिकोण',
+            sourcePattern: 'सीबीएसई 2-अंक प्रश्न प्रतिमान',
+            question: `पाठ '${chapterName || 'हिन्दी'}' के आधार पर '${chosenTopic.title}' से मिलने वाली मुख्य सीख अथवा प्रेरणा का संक्षेप में उल्लेख कीजिए।`,
+            correctAnswer: `यह प्रसंग हमें विपरीत परिस्थितियों में भी नैतिक मूल्यों, सत्य, कर्तव्यनिष्ठा और मानवीय संवेदनाओं को बनाए रखने की प्रेरणा देता है।`,
+            explanation: `बोर्ड परीक्षा में 2 अंक के प्रश्नों में संदर्भ, सटीक तर्क और बिंदुवार सीख का उल्लेख करने पर पूर्ण अंक प्राप्त होते हैं।`,
+            conceptTested: 'जीवन-मूल्य एवं परीक्षा-अभिव्यक्ति',
+          },
+        ],
+      });
+    }
 
     if (isMath) {
       // Mathematics Fallback: Real solving/calculation, NOT definition!
@@ -2735,6 +2966,11 @@ app.post('/api/ai/extract-chapter-topics', async (req, res) => {
       Array.isArray(materials) &&
       materials.some((m: any) => (m.content && m.content.trim().length > 50) || m.fileData);
 
+    const isHindi = isHindiSubject(subject, chapterName);
+    const hindiDirective = isHindi
+      ? `\n${getHindiPromptDirectives(chapterName)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST write all topic titles, summaries, and keyPoints strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+      : '';
+
     const ai = getAI();
     if (ai) {
       const contentsParts: any[] = [];
@@ -2757,7 +2993,7 @@ app.post('/api/ai/extract-chapter-topics', async (req, res) => {
       }
 
       const promptText = `You are an elite curriculum architect and academic textbook analyzer.
-Analyze the chapter "${chapterName}" in the subject "${subject || 'General'}" (Exam: ${examName || 'Standard Curriculum'}).
+Analyze the chapter "${chapterName}" in the subject "${subject || 'General'}" (Exam: ${examName || 'Standard Curriculum'}).${hindiDirective}
 
 ${
   hasMaterials
@@ -2835,6 +3071,73 @@ Return pure JSON with no markdown wrapping:
       } catch (aiErr: any) {
         console.warn(`[ExtractChapterTopics] API unavailable (${formatErrorNote(aiErr)}), using standard curriculum breakdown`);
       }
+    }
+
+    if (isHindi) {
+      const hindiFallbackTopics = [
+        {
+          id: `topic-${Date.now()}-1`,
+          title: `${chapterName}: पाठ परिचय, पृष्ठभूमि एवं केंद्रीय भाव`,
+          summary: `लेखक/कवि का परिचय, रचना की ऐतिहासिक व सामाजिक पृष्ठभूमि तथा पाठ का मूल संदेश।`,
+          sourceReference: hasMaterials && materials[0]?.fileName ? materials[0].fileName : 'CBSE/NCERT पाठ्यक्रम',
+          keyPoints: [
+            `पाठ का केंद्रीय भाव, वैचारिक दृष्टिकोण एवं प्रतिपाद्य`,
+            'रचनाकार का जीवन दर्शन एवं सामाजिक संदर्भ',
+            'पाठ का मूल उद्देश्य एवं विद्यार्थियों हेतु नैतिक संदेश',
+          ],
+          keyFormula: 'पाठ परिचय + केंद्रीय संदेश',
+          status: 'not_started',
+          orderIndex: 0,
+        },
+        {
+          id: `topic-${Date.now()}-2`,
+          title: `${chapterName}: मुख्य व्याख्या, भावार्थ एवं प्रसंग विश्लेषण`,
+          summary: `पंक्तिवार भावार्थ, प्रतीकार्थ, मुख्य संवाद तथा पात्रों के चरित्र की प्रमुख विशेषताएं।`,
+          sourceReference: hasMaterials && materials[0]?.fileName ? materials[0].fileName : 'CBSE/NCERT पाठ्यक्रम',
+          keyPoints: [
+            'गद्यांश/काव्यांश का सरल एवं स्पष्ट भावार्थ',
+            'मुख्य संवाद, पात्रों की मनोदशा एवं चारित्रिक गुण',
+            'प्रतीकात्मक अर्थ एवं छिपे हुए भावों का उद्घाटन',
+          ],
+          keyFormula: 'संदर्भ-सहित भावार्थ एवं आशय स्पष्टीकरण',
+          status: 'not_started',
+          orderIndex: 1,
+        },
+        {
+          id: `topic-${Date.now()}-3`,
+          title: `${chapterName}: शब्दार्थ, व्याकरण एवं शिल्प-सौंदर्य`,
+          summary: `कठिन शब्दों के अर्थ, भाषा-शैली, प्रयुक्त मुहावरे, अलंकार एवं व्याकरणिक बिंदु।`,
+          sourceReference: hasMaterials && materials[0]?.fileName ? materials[0].fileName : 'CBSE/NCERT पाठ्यक्रम',
+          keyPoints: [
+            'तत्सम, तद्भव व कठिन शब्दों के मानक अर्थ',
+            'भाषा-शैली (सरल, सहज, प्रवाहमयी एवं साहित्यिक)',
+            'व्याकरणिक बिंदु: पद परिचय, समास, मुहावरे एवं रस/अलंकार',
+          ],
+          keyFormula: 'शुद्ध मानक वर्तनी एवं व्याकरणिक सटीकता',
+          status: 'not_started',
+          orderIndex: 2,
+        },
+        {
+          id: `topic-${Date.now()}-4`,
+          title: `${chapterName}: परीक्षा उपयोगी प्रश्न-उत्तर एवं बोर्ड तैयारी`,
+          summary: `लघु एवं दीर्घ उत्तरीय प्रश्न, काव्यांश/गद्यांश आधारित प्रश्न एवं उच्च अंक रणनीति।`,
+          sourceReference: hasMaterials && materials[0]?.fileName ? materials[0].fileName : 'CBSE/NCERT पाठ्यक्रम',
+          keyPoints: [
+            'बोर्ड परीक्षा के प्रारूप के अनुसार बिंदुवार उत्तर लेखन',
+            'काव्यांश/गद्यांश पर आधारित बहुविकल्पीय एवं वर्णनात्मक प्रश्न',
+            'सामान्य त्रुटियां एवं उत्तर प्रस्तुति में सुधार',
+          ],
+          status: 'not_started',
+          orderIndex: 3,
+        },
+      ];
+
+      return res.json({
+        topics: hindiFallbackTopics,
+        sourceSummary: hasMaterials
+          ? `${chapterName} सामग्री से ${hindiFallbackTopics.length} मुख्य पाठ्य विषय निकाले गए।`
+          : `${chapterName} हेतु मानक हिन्दी पाठ्यक्रम के प्रमुख विषय।`,
+      });
     }
 
     // High quality curriculum fallback if Gemini API is unreachable or materials are empty

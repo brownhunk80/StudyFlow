@@ -215,8 +215,6 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
 
   // New chapter modal (Document-First Setup)
   const [isCreateChapterModalOpen, setIsCreateChapterModalOpen] = useState(false);
-  const [isAddingChapter, setIsAddingChapter] = useState(false);
-  const [newChapterName, setNewChapterName] = useState('');
 
   // Chapter Topics state (SUBJECT → CHAPTER → TOPICS)
   const [isExtractingTopics, setIsExtractingTopics] = useState(false);
@@ -982,11 +980,11 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                   <div className="pt-1">
                     <button
                       type="button"
-                      onClick={() => setIsAddingChapter(true)}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer inline-flex items-center gap-1.5"
+                      onClick={() => setIsCreateChapterModalOpen(true)}
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer inline-flex items-center gap-2"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add First Chapter</span>
+                      <Plus className="w-4 h-4" />
+                      <span>Add Chapter</span>
                     </button>
                   </div>
                 )}
@@ -1073,6 +1071,17 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
                 </div>
               );
             })}
+
+            {onAddChapter && currentChapters.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsCreateChapterModalOpen(true)}
+                className="w-full p-3.5 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer flex items-center justify-center gap-2 group"
+              >
+                <Plus className="w-4 h-4 text-indigo-500" />
+                <span className="text-xs font-bold">Add Another Chapter</span>
+              </button>
+            )}
           </div>
         </div>
 

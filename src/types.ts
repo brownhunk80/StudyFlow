@@ -47,6 +47,19 @@ export interface Flashcard {
   lastReviewed?: string;
   box: number; // Leitner box 1-5
   status: 'new' | 'learning' | 'review' | 'mastered';
+  // Optional Quantitative & Contextual metadata
+  cardType?: string;
+  problemStatement?: string;
+  expectedAnswer?: string;
+  acceptableAnswers?: string[];
+  formulaUsed?: string;
+  givenData?: string[];
+  stepByStepDerivation?: any[];
+  isMathProblem?: boolean;
+  parentConcept?: string;
+  milestoneTitle?: string;
+  sectionId?: string;
+  chapterId?: string;
 }
 
 export interface FlashcardDeck {
@@ -799,3 +812,87 @@ export interface UserResponse {
   timeSpentSec?: number;
   createdAt?: string;
 }
+
+/**
+ * Worked Example Fading Structures for Procedural & Quantitative Subjects (Science & Maths)
+ */
+export interface WorkedExampleStep {
+  stepNumber: number;
+  label: string;
+  expressionOrAction: string;
+  rationale: string;
+  isFaded?: boolean;
+  fadedPlaceholder?: string;
+  fadedExpectedAnswer?: string;
+  fadedAlternativeAnswers?: string[];
+  userAnswer?: string;
+  isCorrect?: boolean | null;
+}
+
+export interface FadedStage1WorkedExample {
+  stage: 1;
+  stageTitle: string; // "Stage 1: Fully Worked Example"
+  problemStatement: string;
+  fullDerivationSteps: Array<{ step: number; action: string; reasonWhy: string }>;
+  keyTakeaway: string;
+}
+
+export interface FadedStage2Scaffold {
+  stage: 2;
+  stageTitle: string; // "Stage 2: Faded Scaffold (Complete the Missing Step)"
+  problemStatement: string;
+  givenSteps: string[];
+  fadedMissingStepPrompt: string; // the exact intermediate step to solve
+  benchmarkMissingStep: string;
+  solution: string;
+  fadedStepHint?: string;
+  alternativeAcceptableAnswers?: string[];
+}
+
+export interface FadedStage3Independent {
+  stage: 3;
+  stageTitle: string; // "Stage 3: Independent Practice"
+  problemStatement: string;
+  benchmarkAnswer: string;
+  scoringCriteria: string[];
+  trapAnalysis?: string;
+}
+
+export type FadedScaffoldingStage = FadedStage1WorkedExample | FadedStage2Scaffold | FadedStage3Independent;
+
+export interface WorkedExampleProblem {
+  problemStatement: string;
+  givenData: Array<{ symbol: string; value: string; meaning: string }>;
+  governingFormulaOrLaw: string;
+  steps: WorkedExampleStep[];
+  finalAnswer: string;
+  teacherKeyTip: string;
+}
+
+export interface FadedScaffoldProblem {
+  problemStatement: string;
+  givenData: Array<{ symbol: string; value: string; meaning: string }>;
+  governingFormulaOrLaw: string;
+  steps: WorkedExampleStep[];
+  finalAnswer: string;
+  fadedStepHint: string;
+}
+
+export interface WorkedExampleFadingPayload {
+  mode: 'worked_example_fading';
+  topicTag: string;
+  subjectType: 'Science' | 'Maths' | 'procedural' | 'declarative';
+  fadedScaffolding?: [FadedStage1WorkedExample, FadedStage2Scaffold, FadedStage3Independent];
+  workedExample: WorkedExampleProblem;
+  fadedScaffold: FadedScaffoldProblem;
+  independentProblem: {
+    id: string;
+    prompt: string;
+    benchmarkAnswer: string;
+    keyPointsToVerify: string[];
+    trapAnalysis: string;
+    sourceCitation?: string;
+  };
+}
+
+

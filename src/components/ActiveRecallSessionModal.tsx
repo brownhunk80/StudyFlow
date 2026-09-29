@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   X,
   RotateCw,
@@ -22,12 +22,15 @@ import confetti from 'canvas-confetti';
 import { Flashcard, RecallRating } from '../types';
 import { calculateSM2 } from '../utils/spacedRepetition';
 import { VoiceRecallEvaluationResponse } from '../api/recall/evaluate-voice-answer';
+import { validateMathAnswer, MathValidationResult } from '../utils/mathEquivalence';
+import { MathVerificationBadge } from './studyflow/MathVerificationBadge';
 
 interface ActiveRecallSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
   cards: Flashcard[];
   deckTitle: string;
+  isInterleaved?: boolean;
   onCardReviewed?: (cardId: string, updatedFields: Partial<Flashcard>, rating: RecallRating) => void;
   onRateCard?: (cardId: string, rating: RecallRating, updatedFields?: Partial<Flashcard>) => void;
   onSessionComplete?: (totalReviewed: number, xpEarned: number) => void;
@@ -38,6 +41,7 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
   onClose,
   cards = [],
   deckTitle,
+  isInterleaved,
   onCardReviewed,
   onRateCard,
   onSessionComplete,
@@ -54,6 +58,10 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
     good: 0,
     easy: 0,
   });
+
+  // Math & Quantitative Problem Solving State
+  const [mathInput, setMathInput] = useState('');
+  const mathInputRef = useRef<HTMLInputElement | null>(null);
 
   // Voice Answering & SpeechRecognition State
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -87,10 +95,147 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
       setVoiceEvaluation(null);
       setVoiceError(null);
       setIsVoiceActive(false);
+      setMathInput('');
     }
   }, [isOpen, safeCards.length]);
 
   const currentCard = safeCards[currentIndex] || safeCards[0] || null;
+
+  const cardObj = (currentCard || {}) as any;
+
+  // Robust Question Prompt Resolution: handles front, frontPrompt, promptQuestion, problemStatement, etc.
+  const promptText = useMemo(() => {
+    if (!currentCard) return '';
+    return (
+      (typeof currentCard.front === 'string' && currentCard.front.trim()) ||
+      (typeof cardObj.frontPrompt === 'string' && cardObj.frontPrompt.trim()) ||
+      (typeof cardObj.promptQuestion === 'string' && cardObj.promptQuestion.trim()) ||
+      (typeof cardObj.problemStatement === 'string' && cardObj.problemStatement.trim()) ||
+      (typeof cardObj.question === 'string' && cardObj.question.trim()) ||
+      (typeof cardObj.prompt === 'string' && cardObj.prompt.trim()) ||
+      (typeof cardObj.questionText === 'string' && cardObj.questionText.trim()) ||
+      `State the core principle and definition for ${cardObj.parentConcept || cardObj.milestoneTitle || currentCard.chapter || currentCard.subject || 'this concept'}.`
+    );
+  }, [currentCard, cardObj]);
+
+  // Robust Model Answer Resolution
+  const answerText = useMemo(() => {
+    if (!currentCard) return '';
+    return (
+      (typeof currentCard.back === 'string' && currentCard.back.trim()) ||
+      (typeof cardObj.backAnswer === 'string' && cardObj.backAnswer.trim()) ||
+      (typeof cardObj.answer === 'string' && cardObj.answer.trim()) ||
+      (typeof cardObj.expectedAnswer === 'string' && cardObj.expectedAnswer.trim()) ||
+      (typeof cardObj.inlineAnswer === 'string' && cardObj.inlineAnswer.trim()) ||
+      (typeof cardObj.modelAnswer === 'string' && cardObj.modelAnswer.trim()) ||
+      'Review the foundational notes and key principles for this topic.'
+    );
+  }, [currentCard, cardObj]);
+
+  // Detect if current card is an explicit numerical calculation problem
+  const isMathCard = useMemo(() => {
+    if (!currentCard) return false;
+
+    // 1. Explicit calculation card type flags
+    if (cardObj.cardType === 'math_problem' || cardObj.isMathProblem === true) return true;
+
+    // 2. Explicit step-by-step mathematical derivation attached
+    if (Array.isArray(cardObj.stepByStepDerivation) && cardObj.stepByStepDerivation.length > 0) return true;
+
+    // 3. Must be in a quantitative subject context
+    const subjectContext = `${currentCard.subject || ''} ${currentCard.chapter || ''}`.toLowerCase();
+    const isQuantitativeSubject =
+      subjectContext.includes('math') ||
+      subjectContext.includes('algebra') ||
+      subjectContext.includes('geometry') ||
+      subjectContext.includes('calculus') ||
+      subjectContext.includes('trigonometry') ||
+      subjectContext.includes('arithmetic') ||
+      subjectContext.includes('physics');
+
+    if (!isQuantitativeSubject) return false;
+
+    const pText = (
+      currentCard.front ||
+      cardObj.frontPrompt ||
+      cardObj.promptQuestion ||
+      cardObj.problemStatement ||
+      cardObj.question ||
+      ''
+    ).toLowerCase();
+
+    // 4. Must contain an explicit calculation directive
+    const hasCalculationAction =
+      pText.includes('calculate') ||
+      pText.includes('solve for') ||
+      pText.includes('compute the value') ||
+      pText.includes('find the value of') ||
+      pText.includes('find both roots') ||
+      pText.includes('evaluate the numerical');
+
+    // 5. Must have quantitative formula/givenData or numbers
+    const hasMathPayload =
+      (Array.isArray(cardObj.givenData) && cardObj.givenData.length > 0) ||
+      Boolean(cardObj.formulaUsed) ||
+      (/[\d+\-×÷=√²³]/.test(pText) && hasCalculationAction);
+
+    return Boolean(hasCalculationAction && hasMathPayload);
+  }, [currentCard, cardObj]);
+
+  // Real-time Math Validation Result
+  const mathValidation: MathValidationResult = useMemo(() => {
+    if (!currentCard || !isMathCard || !mathInput.trim()) {
+      return {
+        isMatch: false,
+        isExact: false,
+        isEquivalent: false,
+        signError: false,
+        unitError: false,
+        isClose: false,
+        confidence: 0,
+        errorType: 'empty',
+        badgeLabel: '',
+        feedback: '',
+        normalizedInput: '',
+        normalizedExpected: '',
+      };
+    }
+
+    const expected = cardObj.expectedAnswer || cardObj.inlineAnswer || currentCard.back || cardObj.answer || '';
+    const acceptable = Array.isArray(cardObj.acceptableAnswers) ? cardObj.acceptableAnswers : [];
+    const derivation = Array.isArray(cardObj.stepByStepDerivation) ? cardObj.stepByStepDerivation : [];
+
+    return validateMathAnswer(mathInput, expected, acceptable, derivation);
+  }, [currentCard, cardObj, isMathCard, mathInput]);
+
+  const handleInsertSymbol = (symbol: string) => {
+    setMathInput((prev) => {
+      const inputEl = mathInputRef.current;
+      if (inputEl) {
+        const start = inputEl.selectionStart || prev.length;
+        const end = inputEl.selectionEnd || prev.length;
+        const updated = prev.slice(0, start) + symbol + prev.slice(end);
+        setTimeout(() => {
+          inputEl.focus();
+          inputEl.setSelectionRange(start + symbol.length, start + symbol.length);
+        }, 10);
+        return updated;
+      }
+      return prev + symbol;
+    });
+  };
+
+  const handleCheckMathAnswer = () => {
+    if (!mathInput.trim()) return;
+    if (mathValidation.isMatch) {
+      confetti({
+        particleCount: 35,
+        spread: 45,
+        origin: { y: 0.6 },
+      });
+    }
+    setIsFlipped(true);
+  };
 
   // Cleanup speech recognition on unmount or card switch
   const stopVoiceRecording = useCallback(() => {
@@ -124,8 +269,8 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cardId: currentCard.id,
-          front: currentCard.front || (currentCard as any).question || 'Question',
-          back: currentCard.back || (currentCard as any).answer || 'Answer',
+          front: promptText,
+          back: answerText,
           notes: currentCard.notes || '',
           explanation: (currentCard as any).explanation || '',
           subject: currentCard.subject || 'General',
@@ -258,6 +403,7 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
       setSpokenTranscript('');
       setVoiceEvaluation(null);
       setVoiceError(null);
+      setMathInput('');
     } else {
       // Session finished
       setSessionCompleted(true);
@@ -278,8 +424,14 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
     if (!isOpen || sessionCompleted) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is in an input
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+      // Allow Enter inside math input to verify calculation
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        if (e.key === 'Enter' && !isFlipped && isMathCard) {
+          e.preventDefault();
+          handleCheckMathAnswer();
+        }
+        return;
+      }
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -301,7 +453,7 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isFlipped, sessionCompleted, isVoiceActive, spokenTranscript]);
+  }, [isOpen, isFlipped, sessionCompleted, isVoiceActive, spokenTranscript, isMathCard, mathInput, mathValidation]);
 
   const handleRestart = () => {
     setCurrentIndex(0);
@@ -313,6 +465,7 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
     setSpokenTranscript('');
     setVoiceEvaluation(null);
     setVoiceError(null);
+    setMathInput('');
   };
 
   if (!isOpen) return null;
@@ -326,9 +479,16 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
             <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
               <Brain className="w-4 h-4" />
             </div>
-            <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
-              {deckTitle || 'Recall Session'}
-            </span>
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                {deckTitle || 'Recall Session'}
+              </span>
+              {isInterleaved && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200/80 dark:border-indigo-800/80 text-[10px] sm:text-[11px] font-bold text-indigo-700 dark:text-indigo-300 shrink-0">
+                  <span>🔀</span> Interleaved Multi-Topic Mode
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -441,20 +601,28 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
                 />
               </div>
 
-              {/* Subject & Chapter tag */}
-              <div className="text-xs font-bold text-slate-400 truncate flex items-center justify-between">
-                <div>
-                  <span>{currentCard.subject || 'General'}</span>
+              {/* Subject, Chapter & Milestone context tag */}
+              <div className="text-xs font-bold text-slate-400 truncate flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">{currentCard.subject || 'General'}</span>
                   {currentCard.chapter && (
                     <>
-                      <span className="mx-1.5 text-slate-300 dark:text-slate-600">•</span>
-                      <span>{currentCard.chapter}</span>
+                      <span className="text-slate-300 dark:text-slate-600">•</span>
+                      <span className="truncate">{currentCard.chapter}</span>
+                    </>
+                  )}
+                  {((currentCard as any).milestoneTitle || (currentCard as any).parentConcept) && (
+                    <>
+                      <span className="text-slate-300 dark:text-slate-600">•</span>
+                      <span className="text-slate-600 dark:text-slate-300 truncate max-w-[160px] sm:max-w-[220px]">
+                        {(currentCard as any).milestoneTitle || (currentCard as any).parentConcept}
+                      </span>
                     </>
                   )}
                 </div>
 
                 {isSpeechSupported && !isFlipped && (
-                  <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                  <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 shrink-0">
                     <Mic className="w-3 h-3" /> Voice Answering Ready
                   </span>
                 )}
@@ -484,7 +652,7 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
 
                   {/* Question Prompt */}
                   <div className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white leading-relaxed whitespace-pre-line">
-                    {currentCard.front || (currentCard as any).question}
+                    {promptText}
                   </div>
 
                   {/* Retrieval Hint */}
@@ -504,6 +672,86 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
                           <span>Need a hint?</span>
                         </button>
                       )}
+                    </div>
+                  )}
+
+                  {/* ========================================================= */}
+                  {/* MATH & QUANTITATIVE CALCULATION INPUT LAYER               */}
+                  {/* ========================================================= */}
+                  {!isFlipped && isMathCard && (
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                            <Keyboard className="w-3.5 h-3.5" />
+                            <span>Type Your Calculated Value:</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            Fractions, decimals, scientific notation, units supported
+                          </span>
+                        </div>
+
+                        <div className="relative">
+                          <input
+                            ref={mathInputRef}
+                            type="text"
+                            value={mathInput}
+                            onChange={(e) => setMathInput(e.target.value)}
+                            placeholder="e.g. 3/4, 1.5e-4, 9.8 m/s², or 3, 1/2"
+                            className={`w-full px-4 py-2.5 text-sm sm:text-base font-mono font-bold rounded-2xl border transition outline-none shadow-inner bg-slate-50 dark:bg-slate-900 ${
+                              mathValidation.isMatch
+                                ? 'border-emerald-500 text-emerald-900 dark:text-emerald-100 bg-emerald-50/50 dark:bg-emerald-950/30 ring-2 ring-emerald-500/20'
+                                : mathValidation.signError
+                                ? 'border-amber-500 text-amber-900 dark:text-amber-100 bg-amber-50/50 dark:bg-amber-950/30 ring-2 ring-amber-500/20'
+                                : mathValidation.unitError
+                                ? 'border-indigo-500 text-indigo-900 dark:text-indigo-100 bg-indigo-50/50 dark:bg-indigo-950/30 ring-2 ring-indigo-500/20'
+                                : mathValidation.isClose
+                                ? 'border-sky-400 text-sky-900 dark:text-sky-100 bg-sky-50/40 dark:bg-sky-950/20 ring-2 ring-sky-400/20'
+                                : mathInput.trim()
+                                ? 'border-indigo-400 dark:border-indigo-600 text-slate-900 dark:text-white'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:border-indigo-500'
+                            }`}
+                          />
+                          {mathValidation.isMatch && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2 className="w-5 h-5 animate-in zoom-in-50" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Quick Math Toolbar */}
+                      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                        <span className="text-[10px] font-bold text-slate-400 mr-1">Insert:</span>
+                        {['+', '-', '×', '÷', '±', '√', '²', '³', 'π', 'θ', '10^', '1/2', '1/4', 'm/s²', 'kg', 'J', 'W', 'Ω', 'x', 'y', '/', '='].map((sym) => (
+                          <button
+                            key={sym}
+                            type="button"
+                            onClick={() => handleInsertSymbol(sym)}
+                            className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-indigo-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold text-slate-700 dark:text-slate-300 transition cursor-pointer hover:text-indigo-600"
+                          >
+                            {sym}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Live Diagnostic Badge */}
+                      {mathInput.trim() && (
+                        <MathVerificationBadge validation={mathValidation} />
+                      )}
+
+                      {/* Verify Button */}
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={handleCheckMathAnswer}
+                          disabled={!mathInput.trim()}
+                          className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                        >
+                          <CheckCircle2 className="w-4 h-4 text-indigo-200" />
+                          <span>Verify Math & Check Solution (Enter)</span>
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -657,13 +905,23 @@ export const ActiveRecallSessionModal: React.FC<ActiveRecallSessionModalProps> =
                         </div>
                       )}
 
+                      {/* Math Calculation Verification (if student typed an answer) */}
+                      {isMathCard && mathInput.trim() && (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                            Your Math Calculation Result:
+                          </span>
+                          <MathVerificationBadge validation={mathValidation} />
+                        </div>
+                      )}
+
                       {/* Model Textbook Answer */}
                       <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-800/60 space-y-1.5">
                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                           Model Reference Answer
                         </span>
                         <div className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white leading-relaxed whitespace-pre-line">
-                          {currentCard.back || (currentCard as any).answer}
+                          {answerText}
                         </div>
                       </div>
 

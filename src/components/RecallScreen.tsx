@@ -153,9 +153,14 @@ export const RecallScreen: React.FC<RecallScreenProps> = ({
           {/* Due Count & Time */}
           <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-5">
             <div>
-              <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                TODAY&apos;S RECALL
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                  TODAY&apos;S RECALL
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200/80 dark:border-indigo-800/80 text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
+                  <span>🔀</span> Interleaved Practice Active
+                </span>
+              </div>
               <h2 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight mt-1 font-mono-digits">
                 {dueCards.length} items due today
               </h2>

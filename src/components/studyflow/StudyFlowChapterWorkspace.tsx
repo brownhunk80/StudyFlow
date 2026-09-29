@@ -46,6 +46,7 @@ import { DocumentSourceModal } from './DocumentSourceModal';
 import { AttachDocumentModal } from './AttachDocumentModal';
 import { ReviewMilestonesModal } from './ReviewMilestonesModal';
 import { DocumentDiagnosticsModal } from './DocumentDiagnosticsModal';
+import { isHindiSubject } from '../../utils/hindiDetection';
 
 interface StudyFlowChapterWorkspaceProps {
   chapter: Chapter;
@@ -130,6 +131,20 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
   // Check whether material is attached
   const hasDocument = Boolean(chapter.documentName || chapter.documentUrl || chapter.rawText);
 
+  // Helper to persist milestones with explicit chapterName and subjectName to avoid generic fallbacks
+  const isHindi = isHindiSubject(subject?.name || exam?.name || chapter.subject, chapter.name, chapter.rawText);
+  const resolvedSubjectName = subject?.name || exam?.name || chapter.subject || (isHindi ? 'Hindi' : 'Science');
+  const saveChapterMilestonesToStorage = (secs: Section[]) => {
+    try {
+      const enriched = secs.map((s: any) => ({
+        ...s,
+        chapterName: chapter.name,
+        subjectName: resolvedSubjectName,
+      }));
+      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(enriched));
+    } catch {}
+  };
+
   // On-demand Detail Generator (Phase B): generates Check Learning, Recall Deck & Dual Summary per milestone
   const ensureSectionContent = async (sec: Section): Promise<Section> => {
     const hasQuestions = (sec.quizzes?.[0]?.questions?.length || 0) > 0;
@@ -161,6 +176,8 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           coreTopics: sec.keyTopics && sec.keyTopics.length > 0 ? sec.keyTopics : [sec.title],
           sectionTextExcerpt: excerpt,
           chapterTitle: chapter.name,
+          subjectName: resolvedSubjectName,
+          subject: resolvedSubjectName,
         }),
       });
 
@@ -277,12 +294,12 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           // Pre-warm Module 2 checkpoints if not already stored
           const existingCPs = localStorage.getItem(`milestone_checkpoints_${sec.id}`);
           if (!existingCPs) {
-            const initialCPs = extractSectionCheckpoints(updatedSection, chapter.name, subject?.name || 'Science');
+            const initialCPs = extractSectionCheckpoints(updatedSection, chapter.name, resolvedSubjectName);
             if (initialCPs.length > 0) {
               localStorage.setItem(`milestone_checkpoints_${sec.id}`, JSON.stringify(initialCPs));
             }
           }
-          localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(next));
+          saveChapterMilestonesToStorage(next);
           window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
           window.dispatchEvent(new Event('storage'));
         } catch {
@@ -461,7 +478,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     try {
       localStorage.setItem(`milestone_recall_deck_${sectionId}`, JSON.stringify(updatedCards));
       localStorage.setItem(`recall_deck_${sectionId}`, JSON.stringify(updatedCards));
-      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(sections));
+      saveChapterMilestonesToStorage(sections);
       window.dispatchEvent(new CustomEvent('studyflow_cards_updated'));
     } catch {}
     const cpScore = getMilestoneCheckpointsScore(sectionId);
@@ -551,7 +568,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     }));
 
     try {
-      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(resetSections));
+      saveChapterMilestonesToStorage(resetSections);
     } catch {}
 
     setSections(resetSections);
@@ -656,7 +673,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     setSections(updated);
     onUpdateChapterSections?.(chapter.id, updated, exam?.id);
     try {
-      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+      saveChapterMilestonesToStorage(updated);
       localStorage.setItem(`recall_deck_${sectionId}`, JSON.stringify(updatedCards));
     } catch {}
   };
@@ -704,7 +721,8 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           rawText,
           inlinePdf: chapter.documentUrl,
           documentName: chapter.documentName,
-          subject: subject?.name || 'General',
+          subject: resolvedSubjectName,
+          subjectName: resolvedSubjectName,
         }),
       });
 
@@ -903,7 +921,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
     }
 
     try {
-      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(newSections));
+      saveChapterMilestonesToStorage(newSections);
     } catch {
       // ignore
     }
@@ -915,7 +933,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
       <>
         <DualPaneSummaryReader
           documentName={chapter.name}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           section={readingSection}
           onBack={() => setReadingSection(null)}
           onUpdateCompletion={(secId, newRate) => {
@@ -1334,7 +1352,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
                     setSections(updated);
                     onUpdateChapterSections?.(chapter.id, updated, exam?.id);
                     try {
-                      localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+                      saveChapterMilestonesToStorage(updated);
                     } catch {}
                   }}
                   onSaveMilestoneCards={(secId, cList) => {
@@ -1473,7 +1491,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         <MilestoneReaderView
           section={readerMilestone}
           chapterName={chapter.name}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           chapterRawText={chapter.rawText || (chapter as any).documentText}
           isOpen={true}
           onClose={() => setReaderMilestone(null)}
@@ -1492,7 +1510,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         <MilestoneCheckpointsRunner
           section={checkpointsMilestone}
           chapterName={chapter.name}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           isOpen={true}
           onClose={() => setCheckpointsMilestone(null)}
           onProceedToRecallDeck={() => {
@@ -1511,7 +1529,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
         <MilestoneRecallDeckRunner
           section={recallDeckMilestone}
           chapterName={chapter.name}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           isOpen={true}
           onClose={() => setRecallDeckMilestone(null)}
           checkpointsScore={getMilestoneCheckpointsScore(recallDeckMilestone.id)}
@@ -1545,7 +1563,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           section={quizModalSection.section}
           activeMilestone={quizModalSection.section}
           chapterName={chapter.name}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           chapterRawText={chapter.rawText || (chapter as any).documentText}
           isOpen={true}
           initialMode={quizModalSection.mode}
@@ -1562,7 +1580,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
             setSections(updated);
             onUpdateChapterSections?.(chapter.id, updated, exam?.id);
             try {
-              localStorage.setItem(`chapter_milestones_${chapter.id}`, JSON.stringify(updated));
+              saveChapterMilestonesToStorage(updated);
             } catch {}
           }}
         />
@@ -1575,7 +1593,7 @@ export const StudyFlowChapterWorkspace: React.FC<StudyFlowChapterWorkspaceProps>
           chapterName={chapter.name}
           activeChapter={chapter}
           chapterRawText={chapter.rawText || (chapter as any).documentText}
-          subjectName={subject?.name || 'Science'}
+          subjectName={resolvedSubjectName}
           isOpen={true}
           initialMode={flashcardsModalSection.mode}
           onClose={() => setFlashcardsModalSection(null)}

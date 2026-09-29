@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
+import { isHindiSubject } from '../../utils/hindiDetection';
 
 export const VoiceRecallEvaluationRequestSchema = z.object({
   cardId: z.string().optional(),
@@ -89,7 +90,12 @@ export async function evaluateVoiceAnswer(
       },
     });
 
-    const systemInstruction = `You are a supportive, high-precision academic tutor evaluating a student's spoken verbal response to an active recall flashcard.
+    const isHindi = isHindiSubject(subject, chapter, `${front} ${back} ${spokenTranscript}`);
+    const hindiInstruction = isHindi
+      ? `\n- HINDI CURRICULUM DIRECTIVE: The subject/flashcard is in Hindi. All feedback (instantFeedback, verdictLabel, keyPointsCovered, keyPointsMissed) MUST be written in natural, fluent Devanagari Hindi (शुद्ध हिन्दी). Do NOT critique the student for speaking in Hindi.`
+      : '';
+
+    const systemInstruction = `You are a supportive, high-precision academic tutor evaluating a student's spoken verbal response to an active recall flashcard.${hindiInstruction}
 
 Your task:
 1. Compare the student's spoken transcript against the flashcard prompt and model reference answer.
@@ -139,12 +145,24 @@ Evaluate the accuracy and provide instant feedback matching the JSON schema.`;
           }
         }
       } catch (err: any) {
-        console.warn(`[evaluateVoiceAnswer] Model ${model} failed, trying fallback:`, err?.message || err);
+        const isQuotaOrRateLimit =
+          err?.status === 429 ||
+          err?.code === 429 ||
+          `${err?.message}`.includes('429') ||
+          `${err?.message}`.includes('RESOURCE_EXHAUSTED') ||
+          `${err?.message}`.includes('Quota exceeded');
+
+        if (isQuotaOrRateLimit) {
+          console.warn(`[evaluateVoiceAnswer] Model ${model} rate limit reached (429), checking next fallback.`);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        } else {
+          console.warn(`[evaluateVoiceAnswer] Model ${model} unavailable (${err?.message || 'error'}), checking fallback.`);
+        }
       }
     }
   }
 
-  // Resilient heuristic fallback if AI is offline
+  // Resilient heuristic fallback if AI is rate-limited or offline
   return fallbackEvaluation(front, back, spokenTranscript);
 }
 

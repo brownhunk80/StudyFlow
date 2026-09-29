@@ -14,7 +14,10 @@ import {
   Mic,
   ArrowRight,
   Info,
+  Scale,
+  BookOpen,
 } from 'lucide-react';
+import { DimensionCategory, UnitConversionLogEntry } from '../../utils/mathUnitConversion';
 
 export interface CardSessionReviewItem {
   id: string;
@@ -26,6 +29,7 @@ export interface CardSessionReviewItem {
   spokenTranscript?: string;
   intervalDays?: number;
   timeSpentSeconds?: number;
+  unitConversionLog?: UnitConversionLogEntry | null;
 }
 
 export interface RecallSessionD3DistributionProps {
@@ -35,6 +39,7 @@ export interface RecallSessionD3DistributionProps {
   milestoneTitle?: string;
   onStudyAgain?: () => void;
   onClose?: () => void;
+  onOpenReference?: (dimension: DimensionCategory) => void;
 }
 
 export const RecallSessionD3Distribution: React.FC<RecallSessionD3DistributionProps> = ({
@@ -44,6 +49,7 @@ export const RecallSessionD3Distribution: React.FC<RecallSessionD3DistributionPr
   milestoneTitle = 'Milestone',
   onStudyAgain,
   onClose,
+  onOpenReference,
 }) => {
   const [chartView, setChartView] = useState<'donut' | 'bar'>('donut');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -147,12 +153,14 @@ export const RecallSessionD3Distribution: React.FC<RecallSessionD3DistributionPr
         : null;
 
     const relearnCards = sessionReviews.filter((r) => r.rating === 'relearn' || r.rating === 'again');
+    const unitConversionCards = sessionReviews.filter((r) => r.unitConversionLog != null);
 
     return {
       total,
       masteryRate,
       avgVoiceScore,
       relearnCards,
+      unitConversionCards,
     };
   }, [sessionReviews]);
 
@@ -575,6 +583,65 @@ export const RecallSessionD3Distribution: React.FC<RecallSessionD3DistributionPr
                   <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 shrink-0">
                     Relearn (1d)
                   </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* 4.5. UNIT CONVERSIONS APPLIED IN THIS SESSION */}
+        {/* ------------------------------------------------------------- */}
+        {sessionMetrics.unitConversionCards.length > 0 && (
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-700/80 space-y-3">
+            <div className="flex items-center justify-between text-xs font-black text-slate-900 dark:text-white">
+              <span className="flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
+                <Scale className="w-4 h-4" />
+                <span>Unit Conversions Applied ({sessionMetrics.unitConversionCards.length})</span>
+              </span>
+              <span className="text-[11px] font-normal text-slate-400">
+                Accepted mathematically equivalent units
+              </span>
+            </div>
+
+            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+              {sessionMetrics.unitConversionCards.map((ucCard, idx) => (
+                <div
+                  key={ucCard.id || idx}
+                  className="p-3 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900/60 space-y-2 text-xs"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-bold text-slate-800 dark:text-slate-200 truncate flex-1">
+                      {ucCard.front}
+                    </p>
+                    {ucCard.unitConversionLog && (
+                      <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
+                        {ucCard.unitConversionLog.dimensionTitle}
+                      </span>
+                    )}
+                  </div>
+
+                  {ucCard.unitConversionLog ? (
+                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-indigo-100 dark:border-indigo-900/40 text-[11px]">
+                      <span className="font-mono font-bold text-indigo-950 dark:text-indigo-200">
+                        {ucCard.unitConversionLog.scaleEquation}
+                      </span>
+                      {onOpenReference && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenReference(ucCard.unitConversionLog!.dimension)}
+                          className="text-indigo-600 dark:text-indigo-400 hover:underline font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                        >
+                          <BookOpen className="w-3 h-3" />
+                          <span>View Reference</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-indigo-900 dark:text-indigo-200">
+                      Target: {ucCard.back}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

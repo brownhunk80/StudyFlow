@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import type { DocumentMilestoneItem, DocumentCurriculumExtraction } from '../../types';
 import { parsePdfBuffer } from '../debug/inspect-document';
+import { isHindiSubject, getHindiPromptDirectives, extractHindiKeyEntities } from '../../utils/hindiDetection';
 
 // =============================================================
 // ZOD VALIDATION SCHEMAS
@@ -283,14 +284,20 @@ export async function processDocumentWithGemini(
       },
     });
 
-    const systemInstruction = `You are a curriculum analysis engine. Your sole task is to analyze the provided textbook chapter/document and extract learning milestones based EXCLUSIVELY on the actual text, headings, and sub-sections present in the source material.
+    const isHindi = isHindiSubject(subject, chapterName, documentContent);
+    const hindiDirective = isHindi
+      ? `\n${getHindiPromptDirectives(chapterName)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST write the entire JSON response completely in standard Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+      : '';
+
+    const systemInstruction = `You are a strict curriculum analysis engine. Your sole task is to analyze the provided textbook chapter/document and extract learning milestones based EXCLUSIVELY and VERBATIM on the actual text, headings, events, dialogues, stanzas, and sub-sections present in the source material.${hindiDirective}
 
 CRITICAL RULES:
-1. Do NOT invent, assume, or pull concepts from external knowledge.
-2. Every milestone must correspond to an actual major section or heading found in the text.
-3. Use the author's exact heading names or clear variations.
-4. If the chapter has 4 distinct sections, generate exactly 4 milestones. Do not arbitrarily inflate or compress them.
-5. Provide the exact source reference (e.g., 'Pages 3-7' or 'Section 1.2') for each milestone.
+1. ONLY USE INPUT FROM THE UPLOADED TEXT. DO NOT LOOK FOR OR INVENT ANYTHING FROM OUTSIDE KNOWLEDGE.
+2. Every milestone must correspond to an actual section, poem stanza, story event, or heading found in the text.
+3. Every summary bullet, Check Learning question, and flashcard MUST mention the specific characters, dialogue quotes, actions, stanzas, and terms that literally appear in the provided text.
+4. ABSOLUTELY FORBIDDEN: Do NOT output vague filler statements (e.g. "पाठ के केंद्रीय भाव को समझना", "साहित्यिक गरिमा", "कवि का परिचय", "General rules") unless those exact words and biographies are literally in the text.
+5. If the chapter has 3 to 6 distinct narrative/conceptual sections, generate 3 to 6 milestones.
+6. Provide the exact source reference (e.g., 'Pages 1-3' or 'Section 1.2') and verbatim quotes for each milestone.
 
 Return pure JSON matching this exact structure:
 {
@@ -299,30 +306,30 @@ Return pure JSON matching this exact structure:
   "milestones": [
     {
       "milestoneNumber": 1,
-      "title": "string (exact section title from the document)",
+      "title": "string (actual section heading or main event/stanza title from the text)",
       "sourcePageRange": "string (e.g. 'Pages 1-4')",
       "sourceHeading": "string (the exact heading/subheading in text)",
       "summary": {
-        "compact": "string (concise summary strictly citing the text)",
-        "detailed": "string (deep-dive markdown with actual formulas, definitions, and facts from the text)"
+        "compact": "string (concise summary citing actual events, dialogues, characters, and quotes from text)",
+        "detailed": "string (deep-dive markdown with actual quotes, character actions, story progression, and facts from the text)"
       },
       "coreTopics": [
-        "string (specific sub-concept directly mentioned in this section)"
+        "string (specific character name, dialogue phrase, stanza theme, or concept directly mentioned in this section)"
       ],
       "checkLearning": [
         {
-          "question": "string (derived strictly from this section's content)",
+          "question": "string (asking about a specific event, dialogue, action, or fact directly present in this section)",
           "options": ["string", "string", "string", "string"],
           "correctIndex": 0,
-          "explanation": "string (citing document facts)",
-          "misdirectionBreakdown": "string (why other options are incorrect)"
+          "explanation": "string (citing exact document sentences and facts)",
+          "misdirectionBreakdown": "string (why other options contradict the text)"
         }
       ],
       "recallDeck": [
         {
-          "front": "string (direct active recall prompt)",
-          "back": "string (precise factual answer from text)",
-          "sourceExcerpt": "string (direct quote from the page verifying this answer)"
+          "front": "string (direct active recall prompt about a specific event, dialogue, character, or definition in the text)",
+          "back": "string (precise factual answer directly from the text)",
+          "sourceExcerpt": "string (direct verbatim quote from the text verifying this answer)"
         }
       ]
     }
@@ -341,7 +348,7 @@ Return pure JSON matching this exact structure:
           },
         },
         {
-          text: `Chapter: "${chapterName}"\nSubject: "${subject}"\nSource Document: "${documentName || 'Document'}"\n\nPlease read this PDF visually/OCR and extract the curriculum milestones matching the sections, chapters, and headings in the document.`,
+          text: `Chapter: "${chapterName}"\nSubject: "${subject}"\nSource Document: "${documentName || 'Document'}"\n\nPlease read this PDF visually/OCR and extract the curriculum milestones matching the sections, chapters, characters, dialogues, and headings literally in the document. Do not invent outside information.`,
         },
       ];
     } else if (detectedPageCount > 30 && preDetectedHeadings.length >= 3) {
@@ -359,7 +366,7 @@ ${outlineText}
 Full Document Excerpt:
 ${documentContent.slice(0, 75000)}
 
-Analyze the source text above. Extract curriculum milestones strictly bound to the document's validated sections and page ranges.`;
+Analyze the source text above. Extract curriculum milestones strictly bound to the document's actual text, quoting the real character names, dialogues, stanzas, and events from the excerpt. Do not use outside knowledge.`;
     } else {
       requestContents = `Chapter: "${chapterName}"
 Subject: "${subject}"
@@ -368,7 +375,7 @@ Source Document: "${documentName || 'Document'}"
 Source Document Content (with [Page X] markers):
 ${documentContent.slice(0, 95000)}
 
-Extract the learning milestones strictly matching the actual sections in the text above.`;
+Extract the learning milestones strictly matching the actual sections, characters, events, and stanzas in the text above. Only use input from this uploaded chapter.`;
     }
 
     const modelsToTry = [
@@ -535,59 +542,233 @@ function normalizeMilestones(rawMilestones: any[], chapterName: string): Documen
 // GROUNDED DETERMINISTIC FALLBACK
 // =============================================================
 
+// =============================================================
+// GROUNDED DETERMINISTIC FALLBACK (VERBATIM TEXT EXTRACTION)
+// =============================================================
+
 function generateGroundedFallback(
   chapterName: string,
   subject: string,
   documentName?: string,
-  documentContent?: string,
+  documentContent: string = '',
   detectedHeadings?: Array<{ title: string; pageNumber: number }>,
   pageCount: number = 1
 ): ProcessDocumentResponse {
-  const headings = detectedHeadings && detectedHeadings.length >= 2
-    ? detectedHeadings.slice(0, 6)
-    : [];
+  const isHindi = isHindiSubject(subject, chapterName, documentContent);
+  const cleanDocText = documentContent.replace(/\[Page\s+\d+\]/gi, '').trim();
 
-  let sectionsToBuild: Array<{ title: string; pageRange: string; excerpt: string }> = [];
+  // Split text into meaningful paragraphs
+  const paragraphs = cleanDocText
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 20);
 
-  if (headings.length >= 2) {
-    sectionsToBuild = headings.map((h, idx) => {
-      const nextH = headings[idx + 1];
-      const endPage = nextH ? Math.max(h.pageNumber, nextH.pageNumber - 1) : Math.min(h.pageNumber + 2, pageCount);
-      const pageRange = h.pageNumber === endPage ? `Page ${h.pageNumber}` : `Pages ${h.pageNumber}–${endPage}`;
-      return {
-        title: h.title,
-        pageRange,
-        excerpt: `Directly extracted from section: "${h.title}" (${pageRange})`,
-      };
-    });
-  } else {
-    // Break document lines into logical topics
-    const cleanDoc = documentName ? documentName.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[-_]/g, ' ').trim() : '';
-    const focus = chapterName || cleanDoc || 'Core Curriculum';
-    sectionsToBuild = [
-      {
-        title: `${focus}: Foundational Definitions & Framework`,
-        pageRange: `Pages 1–${Math.max(1, Math.round(pageCount / 3))}`,
-        excerpt: `Core definitions and introductory principles from the opening pages.`,
-      },
-      {
-        title: `${focus}: Governing Mechanisms & Core Theorems`,
-        pageRange: `Pages ${Math.max(2, Math.round(pageCount / 3) + 1)}–${Math.max(2, Math.round((pageCount * 2) / 3))}`,
-        excerpt: `Central mathematical relations and theoretical laws established in the text.`,
-      },
-      {
-        title: `${focus}: Practical Calculations & Boundary Cases`,
-        pageRange: `Pages ${Math.max(3, Math.round((pageCount * 2) / 3) + 1)}–${pageCount}`,
-        excerpt: `Applied problems, real-world constraints, and synthesis questions.`,
-      },
-    ];
+  const totalParagraphs = paragraphs.length;
+  const chunkCount = Math.min(5, Math.max(3, Math.ceil(totalParagraphs / 6) || 3));
+
+  interface TextBlock {
+    title: string;
+    sourcePageRange: string;
+    sourceHeading: string;
+    text: string;
+    sentences: string[];
+    entities: string[];
   }
 
-  const milestones = sectionsToBuild.map((sec, idx) => {
+  const blocks: TextBlock[] = [];
+
+  if (detectedHeadings && detectedHeadings.length >= 2) {
+    const selectedHeadings = detectedHeadings.slice(0, 6);
+    selectedHeadings.forEach((h, idx) => {
+      const nextH = selectedHeadings[idx + 1];
+      const startPage = h.pageNumber;
+      const endPage = nextH ? Math.max(startPage, nextH.pageNumber - 1) : Math.min(startPage + 2, pageCount);
+      const pageRange = isHindi
+        ? startPage === endPage ? `पृष्ठ ${startPage}` : `पृष्ठ ${startPage}–${endPage}`
+        : startPage === endPage ? `Page ${startPage}` : `Pages ${startPage}–${endPage}`;
+
+      // Find paragraphs near this heading
+      const pStartIndex = Math.floor((idx / selectedHeadings.length) * totalParagraphs);
+      const pEndIndex = Math.floor(((idx + 1) / selectedHeadings.length) * totalParagraphs);
+      const blockParas = paragraphs.slice(pStartIndex, Math.max(pStartIndex + 1, pEndIndex));
+      const blockText = blockParas.join('\n\n') || cleanDocText.slice(0, 1500);
+
+      const sentences = blockText
+        .split(/[।.\n!?]+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length >= 15 && s.length <= 250);
+
+      const entities = isHindi
+        ? extractHindiKeyEntities(blockText, 6)
+        : extractKeyTermsFromBlock(blockText, h.title);
+
+      blocks.push({
+        title: h.title,
+        sourcePageRange: pageRange,
+        sourceHeading: h.title,
+        text: blockText,
+        sentences: sentences.length > 0 ? sentences : [blockText.slice(0, 120)],
+        entities: entities.length > 0 ? entities : [h.title],
+      });
+    });
+  } else {
+    // Partition document paragraphs into narrative chunks
+    const parasPerChunk = Math.max(1, Math.ceil(totalParagraphs / chunkCount));
+
+    for (let c = 0; c < chunkCount; c++) {
+      const chunkParas = paragraphs.slice(c * parasPerChunk, (c + 1) * parasPerChunk);
+      const blockText = chunkParas.join('\n\n') || cleanDocText.slice(c * 1500, (c + 1) * 1500) || `${chapterName} खंड ${c + 1}`;
+
+      const sentences = blockText
+        .split(/[।.\n!?]+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length >= 15 && s.length <= 250);
+
+      const entities = isHindi
+        ? extractHindiKeyEntities(blockText, 6)
+        : extractKeyTermsFromBlock(blockText, '');
+
+      const startPage = Math.max(1, Math.round((c / chunkCount) * pageCount) + 1);
+      const endPage = Math.max(startPage, Math.min(pageCount, Math.round(((c + 1) / chunkCount) * pageCount)));
+      const pageRange = isHindi
+        ? startPage === endPage ? `पृष्ठ ${startPage}` : `पृष्ठ ${startPage}–${endPage}`
+        : startPage === endPage ? `Page ${startPage}` : `Pages ${startPage}–${endPage}`;
+
+      // Generate a title based on the primary entity/dialogue/first sentence from this block
+      let blockTitle = '';
+      if (isHindi) {
+        if (entities.length >= 2) {
+          blockTitle = `${entities[0]} एवं ${entities[1]}`;
+        } else if (entities.length === 1) {
+          blockTitle = `${entities[0]} — महत्वपूर्ण प्रसंग`;
+        } else if (sentences.length > 0) {
+          blockTitle = sentences[0].slice(0, 45);
+        } else {
+          blockTitle = `${chapterName}: भाग ${c + 1}`;
+        }
+      } else {
+        if (entities.length >= 2) {
+          blockTitle = `${entities[0]} & ${entities[1]}`;
+        } else if (entities.length === 1) {
+          blockTitle = `${entities[0]} Module`;
+        } else {
+          blockTitle = `${chapterName}: Part ${c + 1}`;
+        }
+      }
+
+      blocks.push({
+        title: blockTitle,
+        sourcePageRange: pageRange,
+        sourceHeading: blockTitle,
+        text: blockText,
+        sentences: sentences.length > 0 ? sentences : [blockText.slice(0, 120)],
+        entities: entities.length > 0 ? entities : [blockTitle],
+      });
+    }
+  }
+
+  // Build authentic milestones from the extracted text blocks
+  const milestones: DocumentMilestoneItem[] = blocks.map((block, idx) => {
     const milestoneNumber = idx + 1;
-    const title = sec.title;
-    const sourcePageRange = sec.pageRange;
-    const sourceHeading = sec.title;
+    const { title, sourcePageRange, sourceHeading, sentences, entities, text } = block;
+
+    const topSentences = sentences.slice(0, 4);
+    const primarySentence = sentences[0] || text.slice(0, 100);
+    const secondarySentence = sentences[1] || sentences[0] || text.slice(0, 100);
+
+    if (isHindi) {
+      const compactBullets = topSentences
+        .map((s) => `• "${s.length > 120 ? s.slice(0, 120) + '...' : s}"`)
+        .join('\n');
+
+      const compactSummary = `### मुख्य विवरण एवं पंक्तियाँ (${sourcePageRange}):\n${compactBullets}\n• **प्रमुख पात्र / विषय**: ${entities.join(', ')}`;
+
+      const detailedSummary = `## ${title} (${sourcePageRange})\n\n### 1. पाठ के इस खंड का वास्तविक घटनाक्रम व प्रसंग\n${topSentences.map((s, i) => `${i + 1}. **मूल पंक्ति**: "${s}"\n   - **व्याख्या व संदर्भ**: यह प्रसंग '${chapterName}' के अंतर्गत ${entities[i % entities.length] || 'पाठ'} के महत्वपूर्ण संवाद और विचार को दर्शाता है।`).join('\n\n')}\n\n### 2. मुख्य पात्र, संवाद एवं शब्दावली\n- **पात्र व विषय**: ${entities.join(', ')}\n- **परीक्षा दृष्टि**: बोर्ड परीक्षा में इन पंक्तियों के संदर्भ, पात्रों के भाव तथा शब्दार्थ पर आधारित प्रश्न पूछे जाते हैं।`;
+
+      const checkLearningQuestions = [
+        {
+          question: `पाठ के इस अंश (${sourcePageRange}) के अनुसार निम्नलिखित पंक्ति का वास्तविक संदर्भ क्या है:\n"${primarySentence.slice(0, 110)}..."?`,
+          options: [
+            `यह इस अंश में वर्णित घटनाक्रम और ${entities[0] || 'मुख्य पात्र'} की स्थिति को दर्शाता है।`,
+            'यह पाठ के विपरीत एक असत्य एवं काल्पनिक प्रसंग है।',
+            'इसका पाठ की मूल कथावस्तु या घटनाक्रम से कोई संबंध नहीं है।',
+            'यह किसी अन्य अप्रासंगिक प्रसंग का सामान्य कथन है।',
+          ],
+          correctIndex: 0,
+          explanation: `पाठ्यांश की मूल पंक्ति: "${primarySentence}"।`,
+          misdirectionBreakdown: 'अन्य विकल्प पाठ के वास्तविक गद्यांश/काव्यांश के विपरीत हैं।',
+          correctAnswer: `यह इस अंश में वर्णित घटनाक्रम और ${entities[0] || 'मुख्य पात्र'} की स्थिति को दर्शाता है।`,
+        },
+      ];
+
+      const recallDeck = [
+        {
+          front: `पाठ '${chapterName}' के इस अंश (${sourcePageRange}) में '${entities[0] || title}' के बारे में क्या उल्लेख है?`,
+          back: secondarySentence.length > 90 ? secondarySentence.slice(0, 90) + '...' : secondarySentence,
+          sourceExcerpt: `मूल पाठ्यांश: "${primarySentence.slice(0, 140)}"`,
+        },
+        {
+          front: `इस अंश में उल्लिखित महत्वपूर्ण संवाद/घटना: "${primarySentence.slice(0, 70)}..." का संबंध किससे है?`,
+          back: `${entities.slice(0, 2).join(' / ')} के प्रसंग से।`,
+          sourceExcerpt: `मूल पाठ (${sourcePageRange})`,
+        },
+      ];
+
+      return {
+        milestoneNumber,
+        title,
+        sourcePageRange,
+        sourceHeading,
+        summary: {
+          compact: compactSummary,
+          detailed: detailedSummary,
+        },
+        coreTopics: entities.length >= 2 ? entities.slice(0, 4) : [title, 'मूल पाठ्यांश', 'संवाद व प्रसंग'],
+        checkLearning: checkLearningQuestions,
+        recallDeck,
+        milestoneTitle: title,
+        recallCards: recallDeck,
+        checkLearningQuestions,
+      };
+    }
+
+    // English Fallback
+    const compactBullets = topSentences
+      .map((s) => `• "${s.length > 120 ? s.slice(0, 120) + '...' : s}"`)
+      .join('\n');
+
+    const compactSummary = `### Key Excerpts (${sourcePageRange}):\n${compactBullets}\n• **Key Concepts**: ${entities.join(', ')}`;
+
+    const detailedSummary = `## ${title} (${sourcePageRange})\n\n### Direct Syllabus Excerpts & Principles\n${topSentences.map((s, i) => `${i + 1}. **Source Text**: "${s}"\n   - **Curriculum Context**: Establishes core mechanism for ${entities[i % entities.length] || 'topic'}.`).join('\n\n')}\n\n### Key Terms & Parameters\n- **Identified Concepts**: ${entities.join(', ')}\n- **Exam Application**: Understand the direct conditions and derivations in this section.`;
+
+    const checkLearningQuestions = [
+      {
+        question: `According to the source text (${sourcePageRange}): "${primarySentence.slice(0, 110)}...", what principle is established?`,
+        options: [
+          `It defines the core mechanism and relationship for ${entities[0] || 'the section'}.`,
+          'It is an empirical approximation with no physical significance.',
+          'It applies only when external boundary conditions are ignored.',
+          'It is an outdated convention replaced by arbitrary standards.',
+        ],
+        correctIndex: 0,
+        explanation: `Direct quote from text: "${primarySentence}"`,
+        misdirectionBreakdown: 'Distractor options contradict the text excerpt.',
+        correctAnswer: `It defines the core mechanism and relationship for ${entities[0] || 'the section'}.`,
+      },
+    ];
+
+    const recallDeck = [
+      {
+        front: `State the key principle or fact established for ${entities[0] || title} (${sourcePageRange}).`,
+        back: secondarySentence.length > 90 ? secondarySentence.slice(0, 90) + '...' : secondarySentence,
+        sourceExcerpt: `Direct from source: "${primarySentence.slice(0, 140)}"`,
+      },
+      {
+        front: `What condition or relationship is described in: "${primarySentence.slice(0, 70)}..."?`,
+        back: `Governs ${entities.slice(0, 2).join(' and ')} in this section.`,
+        sourceExcerpt: `Reference: ${sourcePageRange}`,
+      },
+    ];
 
     return {
       milestoneNumber,
@@ -595,62 +776,15 @@ function generateGroundedFallback(
       sourcePageRange,
       sourceHeading,
       summary: {
-        compact: `• **Source Reference**: ${sourcePageRange}\n• **Key Concept**: Established directly in "${title}"\n• **Core Rules**: Understand the primary mechanisms and equations specified in this section.`,
-        detailed: `### ${title}\n\n#### Section Overview (${sourcePageRange})\nThis section addresses the direct curriculum requirements for ${chapterName}. Key principles include foundational terminology, qualitative intuition, and specific problem-solving workflows.\n\n#### Critical Formulas & Facts\n- Focus on core parameters defined in ${sourcePageRange}.\n- Check dimensions and signs before substitution.\n- Review edge cases where standard assumptions break down.`,
+        compact: compactSummary,
+        detailed: detailedSummary,
       },
-      coreTopics: [
-        `${title} — Core Concept`,
-        `Fundamental Principles`,
-        `Application & Context`,
-      ],
-      checkLearning: [
-        {
-          question: `According to ${sourcePageRange} in "${title}", what is the primary principle established?`,
-          options: [
-            `The foundational definitions, rules, and scope defined in ${title}`,
-            'Arbitrary conventions that can be ignored without impacting validity',
-            'An outdated proposition superseded by irrelevant criteria',
-            'A localized exception with no conceptual significance',
-          ],
-          correctIndex: 0,
-          explanation: `As detailed in the source text (${sourcePageRange}), understanding the defining criteria and principles of "${title}" is required for curriculum mastery.`,
-          misdirectionBreakdown: 'Distractor options contradict the foundational meaning and criteria documented in the text.',
-          correctAnswer: `The foundational definitions, rules, and scope defined in ${title}`,
-        },
-      ],
-      recallDeck: [
-        {
-          front: `What is the central concept or principle introduced in ${title}?`,
-          back: `The core curriculum principles and definitions documented in ${sourcePageRange}.`,
-          sourceExcerpt: sec.excerpt,
-        },
-        {
-          front: `State the primary relationship or standard emphasized in ${title} (${sourcePageRange}).`,
-          back: `The foundational criteria, mechanisms, and distinctions established in this section.`,
-          sourceExcerpt: sec.excerpt,
-        },
-      ],
+      coreTopics: entities.length >= 2 ? entities.slice(0, 4) : [title, 'Core Principles', 'Direct Application'],
+      checkLearning: checkLearningQuestions,
+      recallDeck,
       milestoneTitle: title,
-      recallCards: [
-        {
-          front: `What is the central concept or principle introduced in ${title}?`,
-          back: `The core curriculum principles and definitions documented in ${sourcePageRange}.`,
-        },
-      ],
-      checkLearningQuestions: [
-        {
-          question: `According to ${sourcePageRange} in "${title}", what is the primary principle established?`,
-          options: [
-            `The foundational definitions, rules, and scope defined in ${title}`,
-            'Arbitrary conventions that can be ignored without impacting validity',
-            'An outdated proposition superseded by irrelevant criteria',
-            'A localized exception with no conceptual significance',
-          ],
-          correctIndex: 0,
-          explanation: `As detailed in the source text (${sourcePageRange}), understanding the defining criteria and principles of "${title}" is required for curriculum mastery.`,
-          correctAnswer: `The foundational definitions, rules, and scope defined in ${title}`,
-        },
-      ],
+      recallCards: recallDeck,
+      checkLearningQuestions,
     };
   });
 
@@ -663,4 +797,28 @@ function generateGroundedFallback(
     generatedAt: new Date().toISOString(),
     source: 'structured_fallback',
   };
+}
+
+function extractKeyTermsFromBlock(text: string, excludeTitle: string): string[] {
+  const stopWords = new Set([
+    'the', 'and', 'for', 'that', 'with', 'this', 'from', 'have', 'were', 'which',
+    'chapter', 'section', 'page', 'these', 'their', 'there', 'about', 'would', 'could',
+    'should', 'using', 'study', 'learn', 'notes', 'review', 'also', 'such', 'into',
+  ]);
+
+  const candidateMatches = text.match(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b/g) || [];
+  const freqMap = new Map<string, number>();
+
+  for (const m of candidateMatches) {
+    const clean = m.trim();
+    if (!stopWords.has(clean.toLowerCase()) && !excludeTitle.toLowerCase().includes(clean.toLowerCase())) {
+      freqMap.set(clean, (freqMap.get(clean) || 0) + 1);
+    }
+  }
+
+  const sorted = Array.from(freqMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map((e) => e[0]);
+
+  return sorted.slice(0, 4);
 }

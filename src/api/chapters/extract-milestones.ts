@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
+import { isHindiSubject, getHindiPromptDirectives, extractHindiKeyEntities } from '../../utils/hindiDetection';
 import { parsePdfBuffer } from '../debug/inspect-document';
 
 // =============================================================
@@ -92,7 +93,13 @@ export async function extractChapterMilestones(
     },
   });
 
-  const systemInstruction = `Analyze the provided chapter text. Identify 3 to 6 major sections/milestones based strictly on the text headings and structural topic shifts.
+  const isHindi = isHindiSubject(reqBody.subject, chapterTitle, rawText);
+
+  const hindiDirective = isHindi
+    ? `\n${getHindiPromptDirectives(chapterTitle)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST write the chapterName, all milestone titles, and all coreTopics completely in standard Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+    : '';
+
+  const systemInstruction = `Analyze the provided chapter text. Identify 3 to 6 major sections/milestones based strictly on the text headings and structural topic shifts.${hindiDirective}
 Return ONLY a valid JSON object matching this schema:
 {
   "chapterName": string,
@@ -116,7 +123,7 @@ CRITICAL RULES:
   const truncatedText = rawText.length > 200000 ? rawText.slice(0, 200000) + '\n...[End of text segment]' : rawText;
 
   const userPrompt = `Chapter Name: "${chapterTitle}"
-Subject: "${reqBody.subject || 'General'}"
+Subject: "${reqBody.subject || (isHindi ? 'Hindi' : 'General')}"
 Document Reference: "${reqBody.documentName || 'Document'}"
 
 Source Text:
@@ -124,12 +131,16 @@ Source Text:
 ${truncatedText}
 ---
 
-Extract the 3 to 6 curriculum milestones matching the sections and headings above.`;
+Extract the 3 to 6 curriculum milestones matching the sections and headings above.${
+    isHindi
+      ? ' Ensure all output JSON strings (chapterName, title, coreTopics) are written strictly in pure Hindi (Devanagari script).'
+      : ''
+  }`;
 
   const candidateModels = [
     'gemini-3.8-flash',
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
   ];
 
   let lastError: any = null;
@@ -220,7 +231,7 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
     `[ExtractMilestones] External models unavailable. Extracting milestones directly from document text structure.`
   );
 
-  return extractTextGroundedMilestones(rawText, chapterTitle, lastError?.message);
+  return extractTextGroundedMilestones(rawText, chapterTitle, lastError?.message, reqBody.subject);
 }
 
 // =============================================================
@@ -231,21 +242,23 @@ Extract the 3 to 6 curriculum milestones matching the sections and headings abov
 export function extractTextGroundedMilestones(
   rawText: string,
   chapterTitle: string,
-  diagnosticNote?: string
+  diagnosticNote?: string,
+  subject?: string
 ): ExtractMilestonesResponse {
+  const isHindi = isHindiSubject(subject, chapterTitle, rawText);
   const lines = rawText.split(/\r?\n/);
   const detectedHeadings: Array<{ title: string; lineIndex: number; ref?: string }> = [];
 
-  // Match section prefixes: e.g. "1.1 Something", "Chapter 1", "Section 2", "## Heading", etc.
+  // Match section prefixes: e.g. "1.1 Something", "Chapter 1", "Section 2", "## Heading", "अध्याय 1", "भाग 2", etc.
   const headingRegex =
-    /^(?:(#+)\s+(.+)|(\d+(?:\.\d+)*)\s*[:.\-–]?\s+(.+)|(?:Section|Unit|Chapter|Part|Module)\s+(\d+[:.\-–]?\s*.+)|([A-Z0-9\s\-:]{4,70}))$/i;
+    /^(?:(#+)\s+(.+)|(\d+(?:\.\d+)*|[०-९]+(?:\.[०-९]+)*)\s*[:.\-–]?\s+(.+)|(?:अध्याय|पाठ|खंड|भाग|प्रकरण|इकाई|Section|Unit|Chapter|Part|Module)\s+([०-९\d]+[:.\-–]?\s*.+)|([A-Z0-9\u0900-\u097F\s\-:]{4,70}))$/i;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed || trimmed.length < 3 || trimmed.length > 90) continue;
 
     // Skip trailing periods/commas unless it's a markdown heading
-    if (/[.,;]$/.test(trimmed) && !trimmed.startsWith('#')) continue;
+    if (/[.,;।]$/.test(trimmed) && !trimmed.startsWith('#')) continue;
 
     const match = trimmed.match(headingRegex);
     if (match) {
@@ -253,7 +266,7 @@ export function extractTextGroundedMilestones(
       const lower = candidate.toLowerCase();
       if (
         candidate.length >= 4 &&
-        !/^(page\s+\d+|contents|table of contents|index|references|bibliography|glossary|summary)$/i.test(
+        !/^(page\s+\d+|contents|table of contents|index|references|bibliography|glossary|summary|पृष्ठ|अनुक्रमणिका|विषय-सूची)$/i.test(
           lower
         )
       ) {
@@ -262,7 +275,13 @@ export function extractTextGroundedMilestones(
           detectedHeadings.push({
             title: candidate,
             lineIndex: i,
-            ref: match[3] ? `Section ${match[3]}` : `Part ${detectedHeadings.length + 1}`,
+            ref: match[3]
+              ? isHindi
+                ? `खंड ${match[3]}`
+                : `Section ${match[3]}`
+              : isHindi
+              ? `भाग ${detectedHeadings.length + 1}`
+              : `Part ${detectedHeadings.length + 1}`,
           });
         }
       }
@@ -282,13 +301,15 @@ export function extractTextGroundedMilestones(
       const topics =
         terms.length >= 2
           ? terms
+          : isHindi
+          ? ['मुख्य भावार्थ एवं व्याख्या', 'कठिन शब्दार्थ', 'परीक्षा उपयोगी प्रश्न-उत्तर']
           : Array.from(new Set([...terms, `${h.title} Principles`, 'Key Mechanisms'])).slice(0, 3);
 
       return {
         milestoneNumber: idx + 1,
         title: h.title,
         coreTopics: topics,
-        pageOrSectionRef: h.ref || `Section ${idx + 1}`,
+        pageOrSectionRef: h.ref || (isHindi ? `भाग ${idx + 1}` : `Section ${idx + 1}`),
       };
     });
   } else {
@@ -297,24 +318,67 @@ export function extractTextGroundedMilestones(
     const chunkCount = Math.min(5, Math.max(3, Math.round(totalLen / 12000)));
     const chunkSize = Math.floor(totalLen / chunkCount);
 
+    const hindiDefaultMilestones = [
+      {
+        title: `${chapterTitle}: पाठ परिचय एवं पृष्ठभूमि`,
+        topics: ['कवि/लेखक परिचय', 'ऐतिहासिक एवं सामाजिक संदर्भ', 'पाठ का केंद्रीय भाव'],
+      },
+      {
+        title: `${chapterTitle}: मूल व्याख्या एवं भावार्थ`,
+        topics: ['काव्य/गद्य पंक्तिवार भावार्थ', 'प्रतीकार्थ एवं संदेश', 'महत्वपूर्ण प्रसंग'],
+      },
+      {
+        title: `${chapterTitle}: चरित्र चित्रण एवं मुख्य संवाद`,
+        topics: ['प्रमुख पात्रों का चरित्र-चित्रण', 'विचारधारा एवं मनोभाव', 'संवाद विश्लेषण'],
+      },
+      {
+        title: `${chapterTitle}: शब्दार्थ एवं व्याकरण बिंदु`,
+        topics: ['कठिन शब्दार्थ', 'पद परिचय व रस/अलंकार', 'मुहावरे एवं भाषा-शैली'],
+      },
+      {
+        title: `${chapterTitle}: परीक्षा उपयोगी प्रश्न-उत्तर`,
+        topics: ['लघु उत्तरीय प्रश्न', 'दीर्घ उत्तरीय प्रश्न', 'प्रतिपाद्य एवं मूल्यांकन'],
+      },
+    ];
+
     for (let c = 0; c < chunkCount; c++) {
       const chunk = rawText.slice(c * chunkSize, (c + 1) * chunkSize);
-      const terms = extractKeyTerms(chunk, '');
+      const hindiEntities = isHindi ? extractHindiKeyEntities(chunk, 6) : [];
+      const terms = isHindi ? hindiEntities : extractKeyTerms(chunk, '');
 
       let title = '';
-      if (c === 0) {
-        title = `${chapterTitle}: Foundations & Core Definitions`;
-      } else if (c === chunkCount - 1) {
-        title = `${chapterTitle}: Applications & Summary`;
+      let topics: string[] = [];
+
+      if (isHindi) {
+        if (hindiEntities.length >= 2) {
+          title = `${hindiEntities[0]} एवं ${hindiEntities[1]}`;
+          topics = hindiEntities.slice(0, 4);
+        } else if (hindiEntities.length === 1) {
+          title = `${hindiEntities[0]} — महत्वपूर्ण प्रसंग`;
+          topics = [hindiEntities[0], 'मुख्य संवाद', 'घटनाक्रम'];
+        } else {
+          const firstSentence = chunk.split(/[।.\n!?]+/)[0]?.trim();
+          title = firstSentence && firstSentence.length >= 10
+            ? firstSentence.slice(0, 40)
+            : `${chapterTitle}: भाग ${c + 1}`;
+          topics = ['पाठ्यांश एवं व्याख्या', 'मुख्य संवाद', 'शब्दार्थ'];
+        }
       } else {
-        title = terms[0] ? `${chapterTitle}: ${terms[0]}` : `${chapterTitle}: Part ${c + 1}`;
+        if (c === 0) {
+          title = `${chapterTitle}: Foundations & Core Definitions`;
+        } else if (c === chunkCount - 1) {
+          title = `${chapterTitle}: Applications & Summary`;
+        } else {
+          title = terms[0] ? `${chapterTitle}: ${terms[0]}` : `${chapterTitle}: Part ${c + 1}`;
+        }
+        topics = terms.length >= 2 ? terms.slice(0, 4) : [`Part ${c + 1} Principles`, 'Mechanisms', 'Problem Solving'];
       }
 
       finalMilestones.push({
         milestoneNumber: c + 1,
         title,
-        coreTopics: terms.length >= 2 ? terms.slice(0, 4) : [`Part ${c + 1} Principles`, 'Mechanisms', 'Problem Solving'],
-        pageOrSectionRef: `Section ${c + 1}`,
+        coreTopics: topics,
+        pageOrSectionRef: isHindi ? `भाग ${c + 1}` : `Section ${c + 1}`,
       });
     }
   }
@@ -330,6 +394,11 @@ export function extractTextGroundedMilestones(
 }
 
 function extractKeyTerms(text: string, excludeTitle: string): string[] {
+  const isHindi = isHindiSubject(undefined, undefined, text);
+  if (isHindi) {
+    return extractHindiKeyEntities(text, 6);
+  }
+
   const stopWords = new Set([
     'the', 'and', 'for', 'that', 'with', 'this', 'from', 'have', 'were', 'which',
     'chapter', 'section', 'page', 'these', 'their', 'there', 'about', 'would', 'could',

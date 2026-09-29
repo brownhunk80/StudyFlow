@@ -1,5 +1,6 @@
 import { Section } from '../types';
 import { getAuthenticCuratedChapter, getChapterCuratedContent } from '../data/chapterTopicsData';
+import { isHindiSubject } from './hindiDetection';
 
 export interface SectionCheckpoint {
   id: string;
@@ -396,7 +397,8 @@ export function extractSectionCheckpoints(
   }
 
   // 4. Subject-aware dynamic synthesizer from all available facts
-  const isScience = isScienceSubject(section, chapterName, subjectName);
+  const isHindi = isHindiSubject(subjectName, chapterName, `${section.title} ${section.sectionTextExcerpt || ''}`);
+  const isScience = !isHindi && isScienceSubject(section, chapterName, subjectName);
   const { keyFacts } = extractFullSectionText(section);
 
   const rawTopics = Array.isArray(section.keyTopics) && section.keyTopics.length > 0
@@ -405,12 +407,86 @@ export function extractSectionCheckpoints(
 
   const topics = rawTopics.map((t) => t.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);
   const primaryTopic = topics[0] || section.title;
-  const secondaryTopic = topics[1] || topics[0] || (isScience ? 'Governing Formula & Laws' : 'Core Mechanism');
-  const tertiaryTopic = topics[2] || topics[1] || (isScience ? 'Experimental Observation & Units' : 'Key Safeguards & Standards');
+  const secondaryTopic = topics[1] || topics[0] || (isHindi ? 'मुख्य भाव एवं प्रसंग' : (isScience ? 'Governing Formula & Laws' : 'Core Mechanism'));
+  const tertiaryTopic = topics[2] || topics[1] || (isHindi ? 'शब्दार्थ व व्याकरण बिंदु' : (isScience ? 'Experimental Observation & Units' : 'Key Safeguards & Standards'));
 
-  const fact1 = keyFacts[0] || `${primaryTopic} represents the primary foundational relationship governing ${section.title}.`;
-  const fact2 = keyFacts[1] || `${secondaryTopic} defines the operational conditions and quantitative/qualitative rules in the textbook.`;
-  const fact3 = keyFacts[2] || `${tertiaryTopic} establishes the mandatory standards of verification and practical problem solving.`;
+  const fact1 = keyFacts[0] || (isHindi ? `'${primaryTopic}' पाठ '${chapterName}' का अत्यंत महत्वपूर्ण वैचारिक एवं साहित्यिक सोपान है।` : `${primaryTopic} represents the primary foundational relationship governing ${section.title}.`);
+  const fact2 = keyFacts[1] || (isHindi ? `'${secondaryTopic}' के माध्यम से लेखक/कवि ने जीवन मूल्यों और यथार्थ का सजीव चित्रण किया है।` : `${secondaryTopic} defines the operational conditions and quantitative/qualitative rules in the textbook.`);
+  const fact3 = keyFacts[2] || (isHindi ? `'${tertiaryTopic}' बोर्ड परीक्षा में संदर्भ-सहित व्याख्या, भावार्थ एवं व्याकरणिक प्रश्नों हेतु अनिवार्य है।` : `${tertiaryTopic} establishes the mandatory standards of verification and practical problem solving.`);
+
+  if (isHindi) {
+    const q1 = `पाठ '${chapterName}' के आधार पर '${primaryTopic}' का प्रतिपाद्य एवं केंद्रीय भाव स्पष्ट कीजिए। लेखक/कवि इसके माध्यम से क्या संदेश देना चाहते हैं?`;
+    const a1 = `**1. मुख्य व्याख्या एवं केंद्रीय भाव:**\n${fact1}\n\n**2. पाठ का विशिष्ट प्रसंग / प्रमाण:**\nपाठ के संदर्भ में यह प्रसंग स्पष्ट करता है कि मानवीय संवेदनाएं, त्याग, कर्तव्यनिष्ठा और नैतिक मूल्य जीवन के सच्चे आधार हैं।\n\n**3. निष्कर्ष एवं संदेश:**\nयह रचना विद्यार्थियों को आत्म-मंथन करने, सत्य के पथ पर चलने तथा मानवीय गरिमा को अपनाने की सशक्त प्रेरणा देती है।`;
+    const rub1 = [
+      `'${primaryTopic}' का सही संदर्भ और पाठ का केंद्रीय भाव स्पष्ट किया गया हो`,
+      'पाठ से संबंधित सटीक प्रसंग, पंक्ति या संवाद का उल्लेख हो',
+      'सटीक, मानक एवं व्याकरण सम्मत हिन्दी भाषा का प्रयोग हो',
+    ];
+    const trap1 = `सामान्य भूल: केवल अपनी सामान्य राय लिखना, जबकि बोर्ड परीक्षा में पाठ के संदर्भ और लेखक/कवि के मूल विचार का सटीक उल्लेख आवश्यक होता है।`;
+
+    const q2 = `प्रस्तुत खंड में '${secondaryTopic}' का क्या महत्व है? इससे संबंधित पात्रों के स्वभाव अथवा घटनाक्रम का विश्लेषण कीजिए।`;
+    const a2 = `**1. मुख्य व्याख्या एवं संदर्भ:**\n${fact2}\n\n**2. पात्र अथवा घटना का विश्लेषण:**\nयह प्रसंग पात्रों के आंतरिक द्वंद्व, नैतिक साहस अथवा सामाजिक यथार्थ को प्रभावशाली शैली में उद्घाटित करता है।\n\n**3. निष्कर्ष:**\nकथा या काव्य की यह कड़ी पाठक को मानवीय संवेदना और विवेक की गहराई तक ले जाती है।`;
+    const rub2 = [
+      `'${secondaryTopic}' की प्रासंगिकता और पात्रों/घटनाओं का तार्किक विश्लेषण`,
+      'पाठ्यपुस्तक के मुख्य शब्दों और भावार्थ का प्रामाणिक प्रयोग',
+      'बिंदुवार संतुलित उत्तर लेखन',
+    ];
+    const trap2 = `सामान्य भूल: पात्रों के चरित्र की सतही व्याख्या करना और घटना के पीछे छिपे गहरे संदेश की उपेक्षा करना।`;
+
+    const q3 = `'${tertiaryTopic}' के संदर्भ में भाषा-शैली, शब्दार्थ अथवा व्याकरणिक सौंदर्य पर प्रकाश डालिए। बोर्ड परीक्षा की दृष्टि से इसका क्या महत्व है?`;
+    const a3 = `**1. मुख्य व्याख्या:**\n${fact3}\n\n**2. भाषा एवं शिल्प-सौंदर्य:**\nप्रयुक्त भाषा में तत्सम-तद्भव शब्दों, उपयुक्त मुहावरों और अलंकारों का सटीक समन्वय है जो भाव अभिव्यक्ति को प्रभावशाली बनाता है।\n\n**3. परीक्षा दृष्टि:**\nआशय स्पष्टीकरण और शिल्प-सौंदर्य संबंधी प्रश्नों में पूरे अंक प्राप्त करने हेतु यह अत्यंत उपयोगी है।`;
+    const rub3 = [
+      `भाषा-शैली, शब्द-चयन अथवा व्याकरणिक बिंदु का सटीक उल्लेख`,
+      'भाव-सौंदर्य एवं शिल्प-सौंदर्य का संतुलित समन्वय',
+      'परीक्षा के प्रारूप के अनुसार बिंदुवार प्रस्तुति',
+    ];
+    const trap3 = `सामान्य भूल: केवल अर्थ लिखकर छोड़ देना और भाषा के शिल्प-सौंदर्य अथवा मुहावरों के प्रयोग को अनदेखा करना।`;
+
+    return [
+      {
+        id: `cp-hin-1-${section.id}`,
+        checkpointNumber: 1,
+        prompt: q1,
+        subtopicTag: primaryTopic,
+        benchmarkAnswer: a1,
+        keyScoringPoints: rub1,
+        trapAnalysis: trap1,
+        userResponse: '',
+        inputMode: 'type',
+        isRevealed: false,
+        selfAssessment: null,
+        sourceCitation: fact1,
+      },
+      {
+        id: `cp-hin-2-${section.id}`,
+        checkpointNumber: 2,
+        prompt: q2,
+        subtopicTag: secondaryTopic,
+        benchmarkAnswer: a2,
+        keyScoringPoints: rub2,
+        trapAnalysis: trap2,
+        userResponse: '',
+        inputMode: 'type',
+        isRevealed: false,
+        selfAssessment: null,
+        sourceCitation: fact2,
+      },
+      {
+        id: `cp-hin-3-${section.id}`,
+        checkpointNumber: 3,
+        prompt: q3,
+        subtopicTag: tertiaryTopic,
+        benchmarkAnswer: a3,
+        keyScoringPoints: rub3,
+        trapAnalysis: trap3,
+        userResponse: '',
+        inputMode: 'type',
+        isRevealed: false,
+        selfAssessment: null,
+        sourceCitation: fact3,
+      },
+    ];
+  }
 
   if (isScience) {
     // SCIENCE QUESTIONS (Physics / Chemistry / Biology)

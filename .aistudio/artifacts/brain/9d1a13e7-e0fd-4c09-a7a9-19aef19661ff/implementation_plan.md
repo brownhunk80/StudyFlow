@@ -1,148 +1,63 @@
-# Concept Check Blurting & Section Understanding Evaluator
+# Fix Active Recall Missing Questions & Precision Math Mode
 
-Integrates the active recall "Blurting" technique directly into Concept Check, allowing students to blurt out everything they remember about a section via text or voice dictation, which AI then rigorously evaluates against the actual section content to identify mastered concepts, knowledge gaps, and misconceptions.
+## Overview & Problem Diagnosis
 
-## User Review & Critical Decisions
+When reviewing flashcards in **Today's Recall** (the primary Active Recall session modal from the main Recall tab), questions were frequently not showing up (rendering as a blank space) and regular conceptual questions were being forced into a mathematical calculation input with a symbol toolbar.
 
-> [!IMPORTANT]
-> The following user preferences were confirmed during the interactive clarification interview:
-
-- **Confirmed Input Method**: Rich text area with interactive voice dictation support (Web Speech API with live transcript capture and audio visualizer feedback).
-- **Confirmed Evaluation Breakdown**: Comprehensive breakdown analyzing **Key Points Covered**, **Missed Concepts**, **Misconceptions & Pitfalls**, and an overarching **Coverage & Retention Score (0–100%)**.
-- **Confirmed Placement**: Dedicated **Blurting Tab** positioned prominently alongside Checkpoints and Section Quiz within the Concept Check runner modal.
-
----
-
-## 1. Overview & Core Concept
-
-### What It Does
-The **Blurting Method** is a cognitive science active recall strategy where a student reviews a section, closes their notes, and "blurts out" everything they remember from memory without looking. 
-
-In this new Concept Check feature:
-1. **Blurting Phase**: The student chooses a section and types or speaks their unfiltered understanding into an active recall canvas.
-2. **AI Comparison & Grounding**: When submitted, the backend compares the student's blurt against the authentic text, key concepts, and summaries of that specific section using Gemini (`gemini-3.8-flash` with resilient multi-model fallbacks).
-3. **Diagnostic Breakdown**: The student receives structured feedback:
-   - **Retention & Coverage Score**: Percentage of the section's core syllabus covered.
-   - **Accurately Recalled Points**: Validated concepts with citations/corroborations from the section.
-   - **Omitted & Missed Concepts**: High-yield facts, formulas, or principles the student forgot to mention.
-   - **Misconceptions & Pitfalls**: Inaccurate statements or flawed reasoning in the student's blurt corrected with canonical benchmark explanations.
-   - **Next Best Action**: Tailored flashcard or checkpoint recommendations to close identified gaps.
-
-### Target Audience & Persona
-Students preparing for board exams, university finals, and competitive tests who need high-leverage active recall and self-diagnostic tools to find blind spots before taking formal quizzes.
+### Root Cause Analysis
+1. **Field Naming Disconnect**: Recent changes to mathematical problem generation output cards with properties named `promptQuestion` and `problemStatement`. The `ActiveRecallSessionModal` strictly evaluated `{currentCard.front || (currentCard as any).question}`. When neither `front` nor `question` existed on the object, the prompt rendered as empty string.
+2. **Sync Loss in `learnDeckSync.ts`**: The synchronizer that pools cards from chapter milestones into `Today's Recall` checked only `rc.frontPrompt || rc.front || rc.promptQuestion`. When cards had `problemStatement` or `prompt`, `frontText` became `""`. If `back` existed, the card was added with `front: ""` and showed up completely blank during practice.
+3. **Aggressive Math Mode Hijack**: `isMathCard` in `ActiveRecallSessionModal` returned `true` if `cardObj.expectedAnswer` was defined (which was automatically set for all cards) or if the card text contained any digit or word like "physics" or "math". This replaced the standard active recall answer buttons and voice recording with an equation input and math symbol palette even for history, biology, or conceptual physics cards.
+4. **Concept Check Overwrite**: In `MilestoneCheckpointsRunner`, detecting science or math forced `worked_example_fading` mode by default, which replaced authentic syllabus checkpoints with a hardcoded optics mirror formula scaffold.
 
 ---
 
-## 2. User Experience & Visual Design
+## Proposed Changes
 
-### Key User Flows
-1. **Opening Concept Check**: Inside any chapter milestone/section, clicking "Concept Check" opens the full modal.
-2. **Switching to Blurting Mode**: The top navigation features a tabbed selector: `Checkpoints (Step-by-Step)` | `Brain Dump / Blurting (Active Recall)` | `Section Quiz`.
-3. **Drafting the Blurt**:
-   - The student sees a clean focus workspace with the section title and key topic tags (without revealing the full text).
-   - A single-click **Voice Dictation** button enables hands-free speaking with live waveform pulse and transcript appending.
-   - Live word and character metrics with optional timer.
-4. **Instant Semantic Analysis**:
-   - Clicking **"Analyze My Blurt"** triggers Gemini analysis with an animated progress state showing grounded comparison steps.
-5. **Interactive Diagnostic Report**:
-   - **Score Badge**: Circular visual score meter (e.g. `82% Recall Coverage`) with color-coded status (`● High Mastery`, `▲ Gaps Identified`).
-   - **Mastered Concepts Card**: Emerald badge list showing each recalled concept with an affirmative checkmark.
-   - **Missed Points Card**: Amber list with expandable explanations of what was left out.
-   - **Misconceptions & Fixes Card**: Rose/Coral card showing specific student claims vs. correct textbook reality.
-   - **One-Click Flashcard Creator**: Option to convert missed points directly into custom flashcards.
-6. **Persistence**: The evaluated blurt, score, and feedback are saved in `localStorage` under `milestone_blurt_${sectionId}` so the student can review previous attempts.
+### 1. `src/components/ActiveRecallSessionModal.tsx`
+- **Robust Multi-Field Prompt Extraction**:
+  - Extract the question prompt using:
+    `currentCard.front || cardObj.frontPrompt || cardObj.promptQuestion || cardObj.problemStatement || cardObj.question || cardObj.prompt || cardObj.questionText`
+  - If all are empty, synthesize a clear, subject-grounded prompt:
+    `"Recall the core concept and definition for ${cardObj.parentConcept || cardObj.milestoneTitle || currentCard.chapter || currentCard.subject || 'this topic'}."`
+- **Robust Answer Extraction**:
+  - Extract the model answer using:
+    `currentCard.back || cardObj.backAnswer || cardObj.answer || cardObj.expectedAnswer || cardObj.inlineAnswer || cardObj.modelAnswer`
+  - Fallback: `"Review the foundational notes and key principles for this topic."`
+- **Precise Math Mode Scoping**:
+  - Restrict `isMathCard` strictly to cards with:
+    - `cardObj.cardType === 'math_problem'`, OR
+    - `cardObj.isMathProblem === true`, OR
+    - Explicit numerical problem phrasing (e.g. `/(?:calculate|compute|solve for|evaluate numerical|find the value of)\b/i.test(promptText)` accompanied by quantitative formula or parameter definitions, and not being a standard multiple-choice or qualitative question).
+  - Ensure standard cards show the standard, clean active recall prompt, voice answering, and self-assessment controls.
 
-### Visual Identity & Theme
-- **Color Palette**:
-  - Dominant Neutral: `#FFFFFF` / dark `#0F172A`
-  - Mastered / Covered: Emerald `#059669` / `#10B981`
-  - Missed / Gaps: Amber `#D97706` / `#F59E0B`
-  - Misconceptions: Coral `#DC2626` / `#EF4444`
-  - Accent / Primary CTA: Indigo `#6366F1` / `#4F46E5`
-- **Typography**: Clean, readable sans-serif (`Plus Jakarta Sans` / system UI font) with tabular figures for statistics and word counts.
-- **Micro-Interactions**: Smooth accordion expansions for feedback categories, audio pulse ring when recording, and celebratory confetti on scores $\ge 80\%$.
+### 2. `src/utils/learnDeckSync.ts`
+- **Comprehensive Property Mapping**:
+  - Update `extractLearnTabDecksAndCards` to extract `frontText` from `rc.frontPrompt || rc.front || rc.promptQuestion || rc.problemStatement || rc.question || rc.prompt || ''`.
+  - Update `backText` from `rc.backAnswer || rc.back || rc.answer || rc.expectedAnswer || rc.inlineAnswer || ''`.
+  - Add defensive prompt synthesis if `backText` is present but `frontText` is missing, ensuring no blank cards enter the `Flashcard[]` store.
 
----
+### 3. `src/components/studyflow/MilestoneCheckpointsRunner.tsx`
+- **Default to Standard Syllabus Checkpoints**:
+  - Set default `activeEngineMode` to `'standard_checkpoints'` so students always see their chapter's actual syllabus checkpoints and rubric criteria, keeping Worked Example Fading accessible via the top toggle without overriding the main checkpoints.
 
-## 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Server-Side Gemini API Proxy**:
-  - *Chosen Approach*: Create a dedicated endpoint `/api/checkpoints/evaluate-blurt` handled in `server.ts` utilizing `@google/genai` with `gemini-3.8-flash` and resilient fallback cascade.
-  - *Why*: Protects API keys, guarantees strict JSON schema output parsing, and prevents client-side bundle bloat.
-- **Decision 2: Web Speech API for Voice Dictation with Textarea Fallback**:
-  - *Chosen Approach*: Use native `webkitSpeechRecognition` / `SpeechRecognition` in the browser with real-time transcript streaming into the textarea.
-  - *Why*: Zero latency, instant feedback, no heavy audio file upload required, and full support for keyboard edits alongside voice.
-- **Decision 3: Non-Destructive Multi-Tab Architecture**:
-  - *Chosen Approach*: Embed the Blurting experience as a first-class tab in `MilestoneCheckpointsRunner` while keeping checkpoints and progress calculation unified.
-  - *Why*: Seamless user experience without opening disconnected modal windows.
+### 4. `src/components/studyflow/MilestoneRecallDeckRunner.tsx`
+- Ensure the same robust prompt extraction fallback exists for the Milestone Recall Deck runner so cards are guaranteed to render prompt statements clearly.
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+## Verification Plan
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                   Concept Check Modal (MilestoneCheckpointsRunner)     │
-│                                                                        │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │ [🎯 Checkpoints]   [🧠 Blurting Active Recall]   [📝 Quiz]     │   │
-│   └────────────────────────────────────────────────────────────────┘   │
-│                                │                                       │
-│          ┌─────────────────────┴─────────────────────┐                 │
-│          ▼                                           ▼                 │
-│  ┌───────────────────────────┐           ┌───────────────────────────┐ │
-│  │   Blurt Input Workspace   │           │   Blurt Diagnostic Report │ │
-│  │  - Rich Text Area         │   POST    │  - Coverage % Score       │ │
-│  │  - Web Speech Dictation   │──────────►│  - Points Mastered (✓)    │ │
-│  │  - Word Counter & Tips    │ /api/     │  - Points Missed (▲)      │ │
-│  │  - "Analyze Blurt" Action │ evaluate- │  - Misconceptions (✕)     │ │
-│  └───────────────────────────┘  blurt    │  - Add Missed to Cards    │ │
-│                                          └───────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│               Backend: Express + @google/genai (server.ts)             │
-│                                                                        │
-│  Endpoint: POST /api/checkpoints/evaluate-blurt                        │
-│  Model: gemini-3.8-flash (fallback: gemini-flash-latest)               │
-│  Input: { chapterTitle, milestoneTitle, sectionExcerpt, studentBlurt } │
-│  Output: Structured JSON schema with coverageScore, pointsCovered,    │
-│          missedPoints, misconceptions, qualitativeSummary, nextSteps   │
-└────────────────────────────────────────────────────────────────────────┘
-```
+### Automated Verification
+1. `compile_applet`: Verify successful compilation and TypeScript type checking.
+2. `lint_applet`: Verify no linting or syntax errors.
 
-### Data Structures & State Model
-
-```ts
-export interface BlurtEvaluationResult {
-  coverageScore: number; // 0-100
-  masteryTier: 'high' | 'moderate' | 'needs_reinforcement';
-  qualitativeSummary: string;
-  pointsCovered: Array<{
-    point: string;
-    studentQuote?: string;
-    explanation: string;
-  }>;
-  missedPoints: Array<{
-    concept: string;
-    whyImportant: string;
-    hintForReview: string;
-  }>;
-  misconceptions: Array<{
-    studentClaim: string;
-    correction: string;
-    canonicalRule: string;
-  }>;
-  nextStepsAdvice: string[];
-  evaluatedAt: string;
-}
-
-export interface SavedBlurtSession {
-  sectionId: string;
-  studentBlurt: string;
-  wordCount: number;
-  result: BlurtEvaluationResult | null;
-  timestamp: string;
-}
-```
+### Manual Verification Steps
+1. Navigate to the **Recall** tab on the main navigation.
+2. Verify that **Today's Recall** displays total due items and estimated time.
+3. Click **START RECALL** to launch the `ActiveRecallSessionModal`.
+4. Verify that:
+   - Every single flashcard displays a clear, legible question prompt (no blank text).
+   - Conceptual and qualitative cards display standard active recall controls (Voice Answering, Reveal Answer, self-rating buttons 1-4).
+   - Only explicit calculation problems display the quantitative math input field and symbol toolbar.
+   - Revealing the answer shows the model textbook response and nuance notes without errors.

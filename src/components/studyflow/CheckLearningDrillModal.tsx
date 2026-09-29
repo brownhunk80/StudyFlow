@@ -39,6 +39,7 @@ import {
 import { ConceptDeconstructionDrawer } from './ConceptDeconstructionDrawer';
 import { PerformanceDiagnosticView } from './PerformanceDiagnosticView';
 import { fetchEvaluateAnswer, MultimodalEvaluationResult } from '../../utils/aiClient';
+import { isHindiSubject } from '../../utils/hindiDetection';
 
 export interface EnrichedQuizQuestion extends Omit<QuizQuestion, 'difficulty'> {
   type: 'multiple_choice' | 'free_response';
@@ -155,15 +156,46 @@ function extractMilestoneQuestions(
 /**
  * Grounded fallback generator when API is offline or returns empty
  */
-function generateDynamicFallbackQuestions(m: any, chapterName?: string): EnrichedQuizQuestion[] {
+function generateDynamicFallbackQuestions(m: any, chapterName?: string, subjectName?: string): EnrichedQuizQuestion[] {
   const topics: string[] =
     (Array.isArray(m?.coreTopics) && m.coreTopics.length > 0 && m.coreTopics) ||
     (Array.isArray(m?.keyTopics) && m.keyTopics.length > 0 && m.keyTopics) ||
     [m?.title || 'Core Subject Matter'];
   const title = m?.title || topics[0] || 'Core Subject Matter';
 
+  const isHindi = isHindiSubject(subjectName, chapterName, `${title} ${topics.join(' ')}`);
+
   return topics.slice(0, 4).map((topic: string, idx: number) => {
     const isRecall = idx % 2 === 0;
+
+    if (isHindi) {
+      return {
+        id: `chk-${m?.id || 'gen'}-${idx + 1}`,
+        quizId: `chk-${m?.id || 'gen'}`,
+        type: 'multiple_choice' as const,
+        questionText: isRecall
+          ? `पाठ '${chapterName || title}' के आधार पर '${topic}' का मुख्य प्रतिपाद्य एवं केंद्रीय भाव क्या है?`
+          : `'${topic}' के प्रसंग में पात्रों के आचरण अथवा लेखक/कवि के दृष्टिकोण का सबसे सटीक विश्लेषण कौन-सा है?`,
+        choices: [
+          `यह पाठ का मूल संदेश स्पष्ट करता है तथा मानवीय मूल्यों व आदर्श आचरण को रेखांकित करता है।`,
+          `यह पाठ के मूल विचार और संदर्भ के सर्वथा विपरीत दृष्टिकोण प्रस्तुत करता है।`,
+          `यह प्रसंग केवल औपचारिकता है और इसका पाठ के केंद्रीय भाव से कोई संबंध नहीं है।`,
+          `यह किसी अन्य संदर्भ की बात करता है जिसका यहाँ कोई औचित्य नहीं है।`,
+        ],
+        correctIndex: 0,
+        explanation: `'${topic}' पाठ '${chapterName || title}' का अत्यंत महत्वपूर्ण बिंदु है, जो विद्यार्थियों को नैतिक मूल्य, कर्तव्यनिष्ठा और मानवीय संवेदना की प्रेरणा देता है।`,
+        topicTag: topic,
+        difficulty: isRecall ? 'Direct Recall' : 'Applied Reasoning',
+        correctAnalysis: `विकल्प (क) बिल्कुल सही है क्योंकि यह '${topic}' के मूल साहित्यिक व नैतिक संदेश को सटीक रूप से उजागर करता है।`,
+        distractorAnalyses: {
+          1: `अनुचित: यह पाठ के प्रामाणिक संदर्भ और लेखक के संदेश के प्रतिकूल है।`,
+          2: `अनुचित: '${topic}' पाठ का मुख्य वैचारिक आधार है, कोई गौण बिंदु नहीं।`,
+          3: `अनुचित: प्रस्तुत अंश पाठ्यपुस्तक के पाठ्यक्रम से पूर्णतः संबद्ध है।`,
+        },
+        modelAnswer: `'${topic}' पाठ '${chapterName || title}' का केंद्रीय बिंदु है, जिसके द्वारा जीवन-मूल्यों और मानवीय संवेदनाओं का प्रामाणिक निरूपण हुआ है।`,
+      };
+    }
+
     return {
       id: `chk-${m?.id || 'gen'}-${idx + 1}`,
       quizId: `chk-${m?.id || 'gen'}`,
@@ -197,6 +229,9 @@ function generateDynamicFallbackQuestions(m: any, chapterName?: string): Enriche
  */
 function getAnswerTextareaPlaceholder(subject?: string): string {
   const s = (subject || '').trim().toLowerCase();
+  if (s.includes('hindi') || s.includes('हिन्दी') || s.includes('हिंदी') || s.includes('kshitij') || s.includes('sparsh') || s.includes('kritika') || s.includes('sanchayan')) {
+    return 'अपना उत्तर, व्याख्या अथवा तर्क यहाँ स्पष्ट रूप से लिखें...';
+  }
   if (s.includes('math') || s.includes('calc') || s.includes('algebra') || s.includes('geometry') || s.includes('stat')) {
     return 'Write your step-by-step mathematical derivation, equations, or reasoning...';
   }
@@ -235,6 +270,8 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
   onSaveMilestoneQuestions,
 }) => {
   const milestone = activeMilestone || section;
+  const isHindi = isHindiSubject(subjectName, chapterName, `${milestone?.title || ''} ${chapterRawText || ''}`);
+  const resolvedSubject = isHindi ? 'Hindi' : (subjectName && subjectName !== 'Science' ? subjectName : 'General');
   // Step state: 'config' | 'runner' | 'diagnostic'
   const [step, setStep] = useState<'config' | 'runner' | 'diagnostic'>('config');
 
@@ -394,6 +431,8 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
           sectionTextExcerpt: textExcerpt,
           chapterTitle: chapterName,
           chapterName,
+          subjectName: resolvedSubject,
+          subject: resolvedSubject,
           questionCount: drillConfig.questionCount || 4,
         }),
       });
@@ -416,6 +455,8 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
             sectionTextExcerpt: textExcerpt,
             chapterTitle: chapterName,
             chapterName,
+            subjectName: resolvedSubject,
+            subject: resolvedSubject,
             questionCount: drillConfig.questionCount || 4,
           }),
         });
@@ -452,14 +493,14 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
           });
           setLoadedQuestions(parsed);
         } else {
-          setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+          setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName, resolvedSubject));
         }
         setIsLoadingQuestions(false);
       })
       .catch((err) => {
         if (isCancelled) return;
         console.warn('[CheckLearning] Question fetch failed, using dynamic topic fallback:', err);
-        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName, resolvedSubject));
         setIsLoadingQuestions(false);
       });
 
@@ -521,6 +562,8 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
           milestoneTitle: milestone.title,
           topicTags: topics,
           sectionTextExcerpt: textExcerpt,
+          subjectName: resolvedSubject,
+          subject: resolvedSubject,
           questionCount: drillConfig.questionCount || 4,
         }),
       });
@@ -534,6 +577,8 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
             milestoneTitle: milestone.title,
             topicTags: topics,
             sectionTextExcerpt: textExcerpt,
+            subjectName: resolvedSubject,
+            subject: resolvedSubject,
             questionCount: drillConfig.questionCount || 4,
           }),
         });
@@ -563,12 +608,12 @@ export const CheckLearningDrillModal: React.FC<CheckLearningDrillModalProps> = (
         });
         setLoadedQuestions(parsed);
       } else {
-        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+        setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName, resolvedSubject));
       }
     } catch (err: any) {
       console.warn('[CheckLearning] Regenerate questions failed, fallback loaded:', err);
       setLoadError(err?.message || 'Failed to regenerate questions. Loaded fallback questions.');
-      setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName));
+      setLoadedQuestions(generateDynamicFallbackQuestions(milestone, chapterName, resolvedSubject));
     } finally {
       setIsRegenerating(false);
       setIsLoadingQuestions(false);

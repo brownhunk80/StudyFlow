@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
+import { isHindiSubject, getHindiPromptDirectives } from '../../utils/hindiDetection';
 
 // ============================================================================
 // 1. ZOD REQUEST & RESPONSE SCHEMAS
@@ -11,6 +12,7 @@ export const GenerateGroundedQuestionsRequestSchema = z.object({
   topicTags: z.array(z.string()).default([]),
   sectionTextExcerpt: z.string(),
   questionCount: z.coerce.number().int().min(1).max(10).default(4),
+  subjectName: z.string().optional(),
 });
 
 export type GenerateGroundedQuestionsRequest = z.infer<
@@ -151,12 +153,14 @@ export function extractDeterministicGroundedQuestions(
   milestoneTitle: string,
   topicTags: string[],
   excerpt: string,
-  targetCount: number
+  targetCount: number,
+  subjectName?: string
 ): GenerateGroundedQuestionsResponse {
+  const isHindi = isHindiSubject(subjectName, chapterTitle, `${milestoneTitle} ${excerpt}`);
   const sentences = excerpt
-    .split(/(?<=[.!?])\s+/)
+    .split(/(?<=[.!?।])\s+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 25);
+    .filter((s) => s.length > 20);
 
   const count = Math.min(targetCount, Math.max(2, sentences.length));
   const verifiedTopic = topicTags[0] || milestoneTitle;
@@ -168,26 +172,49 @@ export function extractDeterministicGroundedQuestions(
     const sentence = sentences[i % sentences.length];
     const words = sentence.split(' ');
     const anchorConcept =
-      words.slice(0, 5).join(' ').replace(/[,;:.]$/, '') || milestoneTitle;
+      words.slice(0, 5).join(' ').replace(/[,;:.।]$/, '') || milestoneTitle;
 
     anchoredPoints.push(sentence);
 
-    const questionText = `According to the source text on ${milestoneTitle}, what principle governs ${anchorConcept}?`;
-    const modelAnswer = `As established in ${milestoneTitle}: ${sentence}`;
-    const keyScoringPoints = [
-      `Directly identifies ${anchorConcept}`,
-      'Explains the principle exactly as articulated in the source excerpt',
-      'Demonstrates applied conceptual reasoning grounded in the source text',
-    ];
+    const questionText = isHindi
+      ? `पाठ '${chapterTitle}' के संदर्भ में '${anchorConcept}' का मुख्य भाव अथवा व्याकरणिक/साहित्यिक नियम क्या है?`
+      : `According to the source text on ${milestoneTitle}, what principle governs ${anchorConcept}?`;
+
+    const modelAnswer = isHindi
+      ? `पाठ्यांश के अनुसार: ${sentence}`
+      : `As established in ${milestoneTitle}: ${sentence}`;
+
+    const keyScoringPoints = isHindi
+      ? [
+          `'${anchorConcept}' का सही संदर्भ स्पष्ट करना`,
+          'पाठ्यांश के आधार पर भावार्थ तथा उद्देश्य को निरूपित करना',
+          'शुद्ध एवं मानक देवनागरी हिन्दी वर्तनी में उत्तर प्रस्तुति',
+        ]
+      : [
+          `Directly identifies ${anchorConcept}`,
+          'Explains the principle exactly as articulated in the source excerpt',
+          'Demonstrates applied conceptual reasoning grounded in the source text',
+        ];
 
     const distractor1 =
       sentences[(i + 1) % sentences.length] ||
-      'An alternative mechanism not supported by this text.';
+      (isHindi
+        ? 'पाठ के केंद्रीय भाव के विपरीत कोई अन्य व्याख्या।'
+        : 'An alternative mechanism not supported by this text.');
+
     const distractor2 =
       sentences[(i + 2) % sentences.length] ||
-      'An opposite principle contradicting the stated rule.';
-    const distractor3 =
-      'An ungrounded assumption not present in the chapter excerpt.';
+      (isHindi
+        ? 'पाठ के संदर्भ से असंबंधित सामान्य धारणा।'
+        : 'An opposite principle contradicting the stated rule.');
+
+    const distractor3 = isHindi
+      ? 'पाठ्यांश में अनुपस्थित कोई अपुष्ट निष्कर्ष।'
+      : 'An ungrounded assumption not present in the chapter excerpt.';
+
+    const explanation = isHindi
+      ? `पाठ्यांश के अनुशीलन से प्रमाणित होता है कि सही उत्तर है: "${sentence}"।`
+      : `Step-by-step verification confirms that the correct answer is directly grounded in the excerpt: "${sentence}".`;
 
     questions.push({
       id: `grounded-${i + 1}`,
@@ -202,7 +229,7 @@ export function extractDeterministicGroundedQuestions(
       choices: [sentence, distractor1, distractor2, distractor3],
       correctIndex: 0,
       correctAnswer: sentence,
-      explanation: `Step-by-step verification confirms that the correct answer is directly grounded in the excerpt: "${sentence}".`,
+      explanation,
       sourceCitation: sentence,
     });
   }
@@ -269,11 +296,16 @@ export async function generateGroundedQuestions(
   const resolvedTopics =
     topicTags && topicTags.length > 0 ? topicTags : [milestoneTitle];
 
+  const isHindi = isHindiSubject(payload.subjectName, chapterTitle, `${milestoneTitle} ${trimmedExcerpt}`);
+  const hindiDirective = isHindi
+    ? `\n${getHindiPromptDirectives(chapterTitle)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST formulate verifiedTopic, questionText, modelAnswer, and keyScoringPoints strictly in pure Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+    : '';
+
   // --------------------------------------------------------------------------
   // Anchor-and-Verify Two-Step System Prompt & Strict Negative Constraints
   // --------------------------------------------------------------------------
   const systemPrompt = `You are an elite Principal Assessment Architect and Academic Curriculum Specialist.
-Your task is to generate high-yield, academically rigorous questions using the "Anchor-and-Verify" Two-Step Pattern.
+Your task is to generate high-yield, academically rigorous questions using the "Anchor-and-Verify" Two-Step Pattern.${hindiDirective}
 You must achieve 100% RELEVANCE and ZERO TOPIC DRIFT based EXCLUSIVELY on the provided section text excerpt.
 
 METHODOLOGY: ANCHOR-AND-VERIFY TWO-STEP PATTERN
@@ -306,7 +338,9 @@ TARGET TOPICS: ${resolvedTopics.join(', ')}
 ${trimmedExcerpt}
 """
 
-Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact topic first, then formulate ${questionCount} grounded Applied Reasoning questions meeting all negative constraints.`;
+Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact topic first, then formulate ${questionCount} grounded Applied Reasoning questions meeting all negative constraints.${
+    isHindi ? ' All output strings must be written strictly in pure Hindi (Devanagari script).' : ''
+  }`;
 
   // Candidate models: cascade through modern supported flash models
   const candidateModels = [
@@ -376,7 +410,8 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
       milestoneTitle,
       resolvedTopics,
       trimmedExcerpt,
-      questionCount
+      questionCount,
+      payload.subjectName
     );
   }
 
@@ -394,7 +429,8 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
       milestoneTitle,
       resolvedTopics,
       trimmedExcerpt,
-      questionCount
+      questionCount,
+      payload.subjectName
     );
   }
 
@@ -407,9 +443,9 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
 
   if (Array.isArray(parsedJson.questions)) {
     const sentences = trimmedExcerpt
-      .split(/(?<=[.!?])\s+/)
+      .split(/(?<=[.!?।])\s+/)
       .map((s) => s.trim())
-      .filter((s) => s.length > 25);
+      .filter((s) => s.length > 20);
 
     parsedJson.questions = parsedJson.questions.map((q: any, idx: number) => {
       const topicTag =
@@ -417,12 +453,23 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
       const sourceAnchorQuote =
         q.sourceAnchorQuote || sentences[idx % sentences.length] || trimmedExcerpt.slice(0, 150);
       const questionText =
-        q.questionText || `According to the text, what principle governs ${topicTag}?`;
+        q.questionText ||
+        (isHindi
+          ? `पाठ '${chapterTitle}' के संदर्भ में '${topicTag}' का मुख्य भाव अथवा नियम क्या है?`
+          : `According to the text, what principle governs ${topicTag}?`);
       const modelAnswer =
-        q.modelAnswer || `As stated in ${parsedJson.verifiedTopic}: ${sourceAnchorQuote}`;
+        q.modelAnswer ||
+        (isHindi
+          ? `पाठ्यांश के अनुसार: ${sourceAnchorQuote}`
+          : `As stated in ${parsedJson.verifiedTopic}: ${sourceAnchorQuote}`);
       const keyScoringPoints =
         Array.isArray(q.keyScoringPoints) && q.keyScoringPoints.length > 0
           ? q.keyScoringPoints
+          : isHindi
+          ? [
+              `'${topicTag}' का सटीक संदर्भ स्पष्ट करना`,
+              'पाठ्यांश के आधार पर भावार्थ निरूपित करना',
+            ]
           : [
               `Directly identifies ${topicTag}`,
               'Explains the mechanism exactly as articulated in the source excerpt',
@@ -431,14 +478,23 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
       // Synthesize high-quality multiple choice options for drill compatibility
       const distractor1 =
         sentences[(idx + 1) % sentences.length] ||
-        'An alternative mechanism not supported by this text.';
+        (isHindi
+          ? 'पाठ के केंद्रीय भाव के विपरीत कोई अन्य व्याख्या।'
+          : 'An alternative mechanism not supported by this text.');
       const distractor2 =
         sentences[(idx + 2) % sentences.length] ||
-        'An opposite principle contradicting the stated rule.';
-      const distractor3 =
-        'An ungrounded assumption not present in the chapter excerpt.';
+        (isHindi
+          ? 'पाठ के संदर्भ से असंबंधित सामान्य धारणा।'
+          : 'An opposite principle contradicting the stated rule.');
+      const distractor3 = isHindi
+        ? 'पाठ्यांश में अनुपस्थित कोई अपुष्ट निष्कर्ष।'
+        : 'An ungrounded assumption not present in the chapter excerpt.';
 
       const choices = [modelAnswer, distractor1, distractor2, distractor3];
+
+      const explanation = isHindi
+        ? `पाठ्यांश के अनुशीलन से प्रमाणित होता है कि सही उत्तर है: "${sourceAnchorQuote}"।`
+        : `Step-by-step verification confirms that the correct answer is directly grounded in the excerpt: "${sourceAnchorQuote}".`;
 
       return {
         id: q.id || `grounded-q-${idx + 1}`,
@@ -453,7 +509,7 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
         choices,
         correctIndex: 0,
         correctAnswer: modelAnswer,
-        explanation: `Step-by-step verification confirms that the correct answer is directly grounded in the excerpt: "${sourceAnchorQuote}".`,
+        explanation,
         sourceCitation: sourceAnchorQuote,
       };
     });
@@ -463,7 +519,8 @@ Execute the Anchor-and-Verify two-step pattern. Extract and verify the exact top
       milestoneTitle,
       resolvedTopics,
       trimmedExcerpt,
-      questionCount
+      questionCount,
+      payload.subjectName
     );
   }
 

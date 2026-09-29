@@ -1104,7 +1104,7 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
             );
           })}
 
-          {onAddChapter && exam && (
+          {onAddChapter && (
             <div className="shrink-0">
               <button
                 onClick={() => setIsCreateChapterModalOpen(true)}
@@ -3069,8 +3069,9 @@ export const SubjectFolderWorkspace: React.FC<SubjectFolderWorkspaceProps> = ({
         subjectName={subjectName}
         onClose={() => setIsCreateChapterModalOpen(false)}
         onCreateChapter={(data) => {
-          if (exam && onAddChapter) {
-            onAddChapter(exam.id, data);
+          if (onAddChapter) {
+            const targetId = exam?.id || subjectId || subjectName;
+            onAddChapter(targetId, data);
           }
         }}
       />

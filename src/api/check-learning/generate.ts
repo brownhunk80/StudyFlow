@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
+import { isHindiSubject, getHindiPromptDirectives } from '../../utils/hindiDetection';
 
 // =============================================================
 // 1. ZOD VALIDATION SCHEMAS
@@ -11,6 +12,7 @@ export const CheckLearningGenerateRequestSchema = z.object({
   topicTags: z.array(z.string()).min(1, 'At least one topic tag is required'),
   sectionTextExcerpt: z.string().optional().default(''),
   questionCount: z.coerce.number().int().min(1).max(10).default(4),
+  subjectName: z.string().optional(),
 });
 
 export type CheckLearningGenerateRequest = z.infer<typeof CheckLearningGenerateRequestSchema>;
@@ -123,8 +125,13 @@ export async function generateCheckLearningQuestions(
     },
   });
 
+  const isHindi = isHindiSubject((input as any).subjectName || (input as any).subject, chapterTitle, `${milestoneTitle} ${sectionTextExcerpt}`);
+  const hindiDirective = isHindi
+    ? `\n${getHindiPromptDirectives(chapterTitle)}\n- CRITICAL MANDATORY INSTRUCTION: You MUST formulate all questions, modelAnswers, keyScoringPoints, and sourceCitations completely in standard Hindi (Devanagari script, शुद्ध हिन्दी). Do NOT use English.`
+    : '';
+
   // Strict negative prompting and academic assessment grounding instructions
-  const systemPrompt = `You are an academic assessment designer. Your objective is to create ${questionCount} accurate, rigorous conceptual questions based SOLELY on the provided source excerpt.
+  const systemPrompt = `You are an academic assessment designer. Your objective is to create ${questionCount} accurate, rigorous conceptual questions based SOLELY on the provided source excerpt.${hindiDirective}
 
 CRITICAL INSTRUCTIONS:
 - Grounding: Base every question strictly on the text provided in [SOURCE EXCERPT]. Do NOT use external world knowledge or topics from other subjects.
@@ -142,7 +149,11 @@ CRITICAL INSTRUCTIONS:
 ${sectionTextExcerpt}
 """
 
-Formulate exactly ${questionCount} rigorous validation questions testing understanding of the provided excerpt. Ensure difficulty is "Applied Reasoning" and every question includes verbatim sourceCitation.`;
+Formulate exactly ${questionCount} rigorous validation questions testing understanding of the provided excerpt. Ensure difficulty is "Applied Reasoning" and every question includes verbatim sourceCitation.${
+    isHindi
+      ? ' All text must be in pure Devanagari Hindi.'
+      : ''
+  }`;
 
   const candidateModels = [
     'gemini-3.8-flash',
@@ -209,20 +220,21 @@ Formulate exactly ${questionCount} rigorous validation questions testing underst
   }
 
   if (!response || !response.text) {
-    throw lastError || new Error('Failed to generate response from Gemini models.');
+    console.warn('[CheckLearningGenerate] Gemini models unavailable, using grounded excerpt fallback');
+    return extractFallbackCheckLearning(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, questionCount, (input as any).subjectName || (input as any).subject);
   }
 
   const responseText = response.text?.trim();
   if (!responseText) {
-    throw new Error('Empty response received from Gemini 2.5 Flash.');
+    return extractFallbackCheckLearning(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, questionCount, (input as any).subjectName || (input as any).subject);
   }
 
   let parsedJson: any;
   try {
     parsedJson = JSON.parse(responseText);
   } catch (err: any) {
-    console.error('[CheckLearningGenerate] JSON parse error:', err, 'Raw response:', responseText);
-    throw new Error('Failed to parse structured JSON from Gemini response.');
+    console.error('[CheckLearningGenerate] JSON parse error, using grounded fallback:', err);
+    return extractFallbackCheckLearning(chapterTitle, milestoneTitle, topicTags, sectionTextExcerpt, questionCount, (input as any).subjectName || (input as any).subject);
   }
 
   // Ensure milestoneTitle is present in response
@@ -248,4 +260,57 @@ Formulate exactly ${questionCount} rigorous validation questions testing underst
   // Final schema validation with Zod
   const validatedResponse = CheckLearningGenerateResponseSchema.parse(parsedJson);
   return validatedResponse;
+}
+
+function extractFallbackCheckLearning(
+  chapterTitle: string,
+  milestoneTitle: string,
+  topicTags: string[],
+  excerpt: string,
+  count: number,
+  subjectName?: string
+): CheckLearningGenerateResponse {
+  const isHindi = isHindiSubject(subjectName, chapterTitle, `${milestoneTitle} ${excerpt}`);
+  const clean = excerpt.replace(/\[Page\s+\d+\]/gi, '').trim();
+  const sentences = clean
+    .split(/(?<=[.!?।])\s+|\n{2,}/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 20 && !s.startsWith('#'));
+
+  const questions: CheckLearningQuestion[] = [];
+  const targetCount = Math.min(count, Math.max(2, sentences.length));
+
+  for (let i = 0; i < targetCount; i++) {
+    const sentence = sentences[i % sentences.length] || clean.slice(0, 100);
+    const tag = topicTags[i % topicTags.length] || milestoneTitle;
+
+    questions.push({
+      id: `q-${i + 1}`,
+      topicTag: tag,
+      difficulty: 'Applied Reasoning',
+      questionText: isHindi
+        ? `पाठ '${chapterTitle}' के इस अंश (${milestoneTitle}) के अनुसार: "${sentence.slice(0, 75)}..." का क्या मुख्य संदर्भ है?`
+        : `According to the source text (${milestoneTitle}), what is the primary significance of: "${sentence.slice(0, 75)}..."?`,
+      modelAnswer: isHindi
+        ? `पाठ्यांश के अनुसार: "${sentence}"`
+        : `As established in the text: "${sentence}"`,
+      keyScoringPoints: isHindi
+        ? [
+            `'${tag}' का सटीक संदर्भ स्पष्ट करना`,
+            'पाठ की मूल पंक्ति का उल्लेख करना',
+            'मानक हिन्दी में उत्तर लेखन',
+          ]
+        : [
+            `Identifies ${tag} accurately`,
+            'Cites exact text from the source excerpt',
+            'Explains core mechanism clearly',
+          ],
+      sourceCitation: sentence,
+    });
+  }
+
+  return {
+    milestoneTitle,
+    questions,
+  };
 }
